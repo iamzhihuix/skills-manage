@@ -1,0 +1,15 @@
+{
+  "featureId": "fix-scanner-persistence-bugs",
+  "reviewedAt": "2026-04-09T10:16:38Z",
+  "commitId": "052b136",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix directly addresses both prior scanner persistence defects. `installed_path` now stores the scanned skill directory instead of the nested `SKILL.md` path, and the new per-agent plus global reconciliation steps remove stale installation and skill rows when rescans no longer find them. The added regression tests exercise both scenarios and the full validator suite passes.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "rust-scanner-and-parser",
+  "summary": "Pass. The scanner fix resolves the previously reported installed_path and stale-row reconciliation bugs without introducing new review findings."
+}
