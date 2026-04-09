@@ -1,6 +1,6 @@
 {
   "milestone": "skill-detail",
-  "round": 2,
+  "round": 1,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -34,14 +34,14 @@
     "passed": 0,
     "failed": 1,
     "failedFeatures": [
-      "fix-skill-detail-install-timestamp"
+      "skill-detail-page"
     ]
   },
   "blockingIssues": [
     {
-      "featureId": "fix-skill-detail-install-timestamp",
+      "featureId": "skill-detail-page",
       "severity": "blocking",
-      "description": "The timestamp fix adds a required `created_at` column to `skill_installations` but never migrates existing databases. Because `init_database()` only runs `CREATE TABLE IF NOT EXISTS`, pre-existing app databases keep the old schema and then fail on the new `SELECT *`/upsert paths that assume `created_at` exists."
+      "description": "The detail page renders `scanned_at` metadata instead of an installation timestamp, and no install-time field is surfaced anywhere in the detail/installations UI, so VAL-DET-001 is still unmet."
     }
   ],
   "appliedUpdates": [],
@@ -49,10 +49,10 @@
     {
       "target": "skills",
       "suggestion": "Update the scrutiny review/validator procedure so Task-spawned `scrutiny-feature-reviewer` subagents can run with automatic execution approval in this worker environment, or document the manual-review fallback explicitly.",
-      "evidence": "In this re-run, the Task invocation for `fix-skill-detail-install-timestamp` exited immediately with `Exec ended early: insufficient permission to proceed`, so the validator again had to perform the feature review manually after checking the handoff, commit diff, and schema behavior.",
+      "evidence": "In this validation run, the Task invocation for `skill-detail-page` exited immediately with `Exec ended early: insufficient permission to proceed`, so the validator had to perform the feature review manually after checking the handoff, transcript skeleton, and commit diff.",
       "isSystemic": true
     }
   ],
   "rejectedObservations": [],
-  "previousRound": ".factory/validation/skill-detail/scrutiny/synthesis.round1.json"
+  "previousRound": null
 }

@@ -1,0 +1,22 @@
+{
+  "featureId": "fix-skill-detail-install-timestamp",
+  "reviewedAt": "2026-04-09T17:49:57Z",
+  "commitId": "e6ade0d",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix does surface `installed_at` to the detail page and addresses the original VAL-DET-001 gap for fresh databases, but it also changes the persisted `skill_installations` schema without adding any migration path for already-initialized app databases.",
+    "issues": [
+      {
+        "file": "src-tauri/src/db.rs",
+        "line": 116,
+        "severity": "blocking",
+        "description": "This feature adds a required `created_at` column to `skill_installations`, and both `get_skill_installations()` (`SELECT *` into `SkillInstallation`) and `upsert_skill_installation()` now assume that column exists. But `init_database()` still only uses `CREATE TABLE IF NOT EXISTS`, which does not alter an existing table. Any user who already had a pre-fix database will keep the old 5-column schema, so the next rescan/install/detail query will fail at runtime with errors like `table skill_installations has no column named created_at` instead of showing the repaired detail page."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "skill-detail-page",
+  "summary": "Fail. The timestamp UI fix resolves the original metadata omission on fresh databases, but it breaks already-initialized databases because the new `skill_installations.created_at` column is never migrated into existing schemas."
+}
