@@ -1,0 +1,15 @@
+{
+  "featureId": "app-shell-and-sidebar",
+  "reviewedAt": "2026-04-09T10:01:48.830689Z",
+  "commitId": "56efa82",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The app shell, sidebar routing, and startup store wiring work for the foundation milestone, and the tests plus browser checks cover the shipped behavior. I did not find a high-confidence correctness bug in this feature.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass. Sidebar/app-shell behavior matches the current foundation milestone scope."
+}

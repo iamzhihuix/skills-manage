@@ -1,0 +1,34 @@
+{
+  "featureId": "rust-scanner-and-parser",
+  "reviewedAt": "2026-04-09T10:01:48.830689Z",
+  "commitId": "c135311",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The scanner parses valid SKILL.md files and populates counts, but two persistence bugs make the database diverge from the filesystem after normal scans/rescans.",
+    "issues": [
+      {
+        "file": "src-tauri/src/commands/scanner.rs",
+        "line": 214,
+        "severity": "blocking",
+        "description": "scan_all_skills_impl persists installed_path as SKILL.md (skill.file_path) instead of the platform entry path/directory. The schema and install flow expect installed_path to be the path under the platform skills directory, so every scanned installation record is wrong for copied/native skills and any detail UI built on top of this metadata will display the wrong installation path."
+      },
+      {
+        "file": "src-tauri/src/commands/scanner.rs",
+        "line": 170,
+        "severity": "blocking",
+        "description": "scan_all_skills_impl only upserts discovered rows and never removes stale skills or skill_installations that disappeared from disk. After a user deletes or renames a skill and rescans, get_skills_by_agent/get_central_skills can still return the old database rows, so the persisted state no longer matches the filesystem."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The tauri-rust-worker handoff already notes the skill procedure says to use the deprecated tempdir crate; the implementation correctly used tempfile instead.",
+      "evidence": "handoffs/2026-04-09T09-12-21-406Z__rust-scanner-and-parser__1751db2c-466d-4943-a44f-24695c917336.json:150-152 suggested updating the skill docs because tempfile/TempDir is the current crate."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Fail. Scanner persistence writes the wrong installed_path and never cleans up stale rows on rescan."
+}
