@@ -66,8 +66,11 @@ export function CentralSkillsView() {
     await rescan();
   }
 
-  function handleRefresh() {
-    loadCentralSkills();
+  async function handleRefresh() {
+    // Re-scan the filesystem first so new/removed skills are picked up,
+    // then reload central skills from the (now-updated) database.
+    await rescan();
+    await loadCentralSkills();
   }
 
   return (

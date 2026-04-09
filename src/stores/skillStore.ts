@@ -31,7 +31,7 @@ export const useSkillStore = create<SkillState>((set) => ({
     }));
     try {
       const skills = await invoke<ScannedSkill[]>("get_skills_by_agent", {
-        agent_id: agentId,
+        agentId,
       });
       set((state) => ({
         skillsByAgent: { ...state.skillsByAgent, [agentId]: skills },

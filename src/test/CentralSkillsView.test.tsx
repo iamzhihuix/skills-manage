@@ -275,13 +275,19 @@ describe("CentralSkillsView", () => {
 
   // ── Refresh Button ────────────────────────────────────────────────────────
 
-  it("calls loadCentralSkills when refresh button is clicked", () => {
+  it("calls rescan then loadCentralSkills when refresh button is clicked", async () => {
     renderCentralSkillsView();
     const refreshBtn = screen.getByRole("button", {
       name: /Refresh central skills/i,
     });
     fireEvent.click(refreshBtn);
-    expect(mockLoadCentralSkills).toHaveBeenCalledTimes(2);
+
+    await waitFor(() => {
+      // rescan is called once (only on refresh, not on mount)
+      expect(mockRescan).toHaveBeenCalledTimes(1);
+      // loadCentralSkills is called twice: once on mount, once on refresh
+      expect(mockLoadCentralSkills).toHaveBeenCalledTimes(2);
+    });
   });
 
   // ── Install Dialog ────────────────────────────────────────────────────────

@@ -54,8 +54,8 @@ export const useCentralSkillsStore = create<CentralSkillsState>((set) => ({
     set({ isInstalling: true, error: null });
     try {
       const result = await invoke<BatchInstallResult>("batch_install_to_agents", {
-        skill_id: skillId,
-        agent_ids: agentIds,
+        skillId,
+        agentIds,
         method,
       });
 

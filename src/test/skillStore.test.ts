@@ -57,13 +57,13 @@ describe("skillStore", () => {
 
   // ── getSkillsByAgent ──────────────────────────────────────────────────────
 
-  it("calls invoke('get_skills_by_agent') with agent_id", async () => {
+  it("calls invoke('get_skills_by_agent') with agentId (camelCase)", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(mockSkills);
 
     await useSkillStore.getState().getSkillsByAgent("claude-code");
 
     expect(invoke).toHaveBeenCalledWith("get_skills_by_agent", {
-      agent_id: "claude-code",
+      agentId: "claude-code",
     });
   });
 

@@ -144,8 +144,8 @@ describe("centralSkillsStore", () => {
       .installSkill("frontend-design", ["cursor"], "symlink");
 
     expect(invoke).toHaveBeenCalledWith("batch_install_to_agents", {
-      skill_id: "frontend-design",
-      agent_ids: ["cursor"],
+      skillId: "frontend-design",
+      agentIds: ["cursor"],
       method: "symlink",
     });
     // Refresh call
@@ -167,8 +167,8 @@ describe("centralSkillsStore", () => {
       .installSkill("frontend-design", ["cursor"], "copy");
 
     expect(invoke).toHaveBeenCalledWith("batch_install_to_agents", {
-      skill_id: "frontend-design",
-      agent_ids: ["cursor"],
+      skillId: "frontend-design",
+      agentIds: ["cursor"],
       method: "copy",
     });
   });
