@@ -62,6 +62,17 @@ pub fn run() {
             commands::skills::get_central_skills,
             commands::skills::get_skill_detail,
             commands::skills::read_skill_content,
+            // Collections
+            commands::collections::create_collection,
+            commands::collections::get_collections,
+            commands::collections::get_collection_detail,
+            commands::collections::add_skill_to_collection,
+            commands::collections::remove_skill_from_collection,
+            commands::collections::delete_collection,
+            commands::collections::update_collection,
+            commands::collections::batch_install_collection,
+            commands::collections::export_collection,
+            commands::collections::import_collection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
