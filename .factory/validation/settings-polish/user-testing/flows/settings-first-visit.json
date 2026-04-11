@@ -1,0 +1,47 @@
+{
+  "groupId": "settings-first-visit",
+  "testedAt": "2026-04-11T11:44:03.471946+00:00",
+  "isolation": {
+    "appUrl": "http://localhost:24200",
+    "home": "/tmp/skills-manage-test-fixtures/settings-polish-home-9064b22d-empty",
+    "startupLog": "evidence/settings-polish/settings-first-visit/first-visit-startup-log.txt",
+    "evidenceDir": "evidence/settings-polish/settings-first-visit"
+  },
+  "toolsUsed": [
+    "Execute",
+    "macOS screencapture",
+    "Apple Vision OCR",
+    "sqlite3"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-CROSS-006",
+      "title": "First-visit experience",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Launched the native Tauri app with an empty isolated HOME and captured the first render of the default Central Skills route.",
+          "expected": "On first launch with no pre-existing skills data, the app should complete the scan, show the sidebar with platforms, and present meaningful onboarding guidance.",
+          "observed": "The real Tauri window showed the sidebar populated with built-in platforms (all zero-count on first visit), the `Welcome to skills-manage!` empty state, guidance for creating `~/.agents/skills/my-skill/SKILL.md`, and a `Go to Settings` call to action."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-first-visit/first-visit-central.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-first-visit/first-visit-central.ocr.json; evidence/settings-polish/settings-first-visit/first-visit-db.json; evidence/settings-polish/settings-first-visit/first-visit-startup-log.txt"
+      },
+      "issues": ""
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Launching against a different HOME causes Cargo/Tauri to rebuild more of the dev stack than a same-HOME rerun would.",
+      "resolution": "Accepted the longer startup and captured evidence once the isolated first-visit window became available."
+    }
+  ],
+  "blockers": [],
+  "summary": "Validated the first-visit experience against an empty isolated HOME. The native Tauri app showed a stable sidebar plus meaningful empty-state guidance and a Settings call to action on first launch."
+}

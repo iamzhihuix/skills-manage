@@ -1,0 +1,252 @@
+{
+  "groupId": "settings-main",
+  "testedAt": "2026-04-11T11:44:03.471946+00:00",
+  "isolation": {
+    "appUrl": "http://localhost:24200/settings",
+    "home": "/tmp/skills-manage-test-fixtures/settings-polish-home-9064b22d-main",
+    "startupLog": "evidence/settings-polish/settings-main/settings-startup-log.txt",
+    "evidenceDir": "evidence/settings-polish/settings-main"
+  },
+  "toolsUsed": [
+    "Execute",
+    "macOS screencapture",
+    "Apple Vision OCR",
+    "sqlite3",
+    "Task (permission-blocked)",
+    "System Events / AppKit / Carbon foreground attempts"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-SET-001",
+      "title": "Settings page shows scan directories",
+      "status": "fail",
+      "steps": [
+        {
+          "action": "Launched the native Tauri app directly on `/settings` with the isolated main fixture HOME and captured the rendered window plus the backing SQLite state.",
+          "expected": "The Settings page should list all built-in scan directories and any custom directories.",
+          "observed": "The saved settings-route evidence showed the page render but no built-in scan-directory path rows, and the isolated SQLite database still had an empty `scan_directories` table after startup, so the page had no seeded built-in directories to list."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/settings-db.json; evidence/settings-polish/settings-main/settings-startup-log.txt"
+      },
+      "issues": "Failed because built-in scan directories were never populated into the `scan_directories` table, so the Settings scan-directory list could not satisfy the contract."
+    },
+    {
+      "id": "VAL-SET-002",
+      "title": "Add custom scan directory",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Attempted to delegate the interactive flow to a `user-testing-flow-validator` subagent, then tried to foreground and drive the native `/settings` window locally with System Events, AppKit/Carbon activation, and synthetic mouse/key events.",
+          "expected": "The Add Directory dialog should open so a custom path can be entered and rescanned.",
+          "observed": "The Task subagent exited immediately with `Exec ended early: insufficient permission to proceed`, and the native Tauri window stayed non-frontmost (`AXFrontmost` false, recursive AX tree only), so the Add Directory control could not be activated on the real user surface."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/task-subagent-error.txt; evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by native Tauri window focus/input automation in this session before the Add Directory dialog could be opened."
+    },
+    {
+      "id": "VAL-SET-003",
+      "title": "Remove custom scan directory",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Tried to establish usable native input on the `/settings` window so an existing custom directory row could be removed.",
+          "expected": "A removable custom directory row should be operable so removing it triggers a rescan and removes the discovered skills.",
+          "observed": "The same native foreground/input blocker prevented any reliable click path to the Settings controls, so the remove flow could not be exercised on the real user surface."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by the same native window focus/input issue that prevented the Add Directory flow."
+    },
+    {
+      "id": "VAL-SET-004",
+      "title": "Add custom platform",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Attempted to reach the custom-platform dialog through the native Settings page after the subagent delegation failure.",
+          "expected": "The Add Platform dialog should open so a custom platform name and directory can be submitted.",
+          "observed": "The native Tauri window never became interactive in this session, so the Add Platform control could not be activated on the real user surface."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/task-subagent-error.txt; evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by native Tauri window focus/input automation in this session before the Add Platform dialog could be opened."
+    },
+    {
+      "id": "VAL-SET-005",
+      "title": "Custom platform shows skills",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Prepared a fixture custom-platform skills directory but first needed to drive the Add Platform UI so the app would register and rescan it.",
+          "expected": "After adding a custom platform and rescanning, its platform view should display the skills found in that directory.",
+          "observed": "Because the Add Platform interaction could not be executed on the real user surface, the prerequisite custom-platform registration never occurred and the downstream platform-view assertion could not be validated."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by the untestable Add Platform flow in this session."
+    },
+    {
+      "id": "VAL-SET-006",
+      "title": "About section shows version",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Captured the native `/settings` route with the isolated main fixture HOME and inspected the About card text via OCR.",
+          "expected": "The Settings page should show the app version and database path.",
+          "observed": "The saved evidence clearly exposed `skills-manage v0.1.0` and `~/.skillsmanage/db.sqlite` in the About section of the real Tauri window."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/settings-route.ocr.json"
+      },
+      "issues": ""
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "title": "Custom directory -> rescan -> visible",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Prepared an isolated custom-scan fixture directory and then attempted to open the Add Directory Settings flow needed to rescan it.",
+          "expected": "A user should be able to add the directory in Settings and then see the new skills appear after rescan.",
+          "observed": "The interactive Settings controls could not be reached on the real user surface because the native window never became foreground-interactive in this session."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by the same native Settings input issue as VAL-SET-002."
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "Custom platform -> install -> verify",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Prepared an isolated custom-platform directory and importable central skills, then attempted to drive the Settings add-platform and install journey.",
+          "expected": "A user should be able to add a custom platform, install a central skill to it, and confirm the skill appears in that platform view.",
+          "observed": "The native window automation blocker prevented both the add-platform interaction and the subsequent install journey on the real user surface."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by the same native Settings input issue as VAL-SET-004."
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "title": "Navigation consistency",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Collected native evidence for the first-visit Central Skills route and the `/settings` route, then attempted to establish real sidebar/back-navigation interaction for the remaining views.",
+          "expected": "Every view should be reachable from the sidebar or navigation controls, and the sidebar should reflect the active view as a user navigates.",
+          "observed": "Direct route captures showed Central Skills and Settings rendering, but the real sidebar/back-navigation actions could not be driven because the native window would not become interactive in this session."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-first-visit/first-visit-central.png",
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/foreground-debug.json"
+      },
+      "issues": "Blocked by inability to exercise real sidebar/back-navigation interactions on the native Tauri surface."
+    },
+    {
+      "id": "VAL-COL-007",
+      "title": "Import collection from JSON",
+      "status": "blocked",
+      "steps": [
+        {
+          "action": "Prepared a valid `imported-ops-collection.json` fixture under the isolated Downloads directory and then tried to reach the sidebar import control on the native app surface.",
+          "expected": "A user should be able to activate the import control, choose the JSON file, and see the imported collection created.",
+          "observed": "The native app window could be captured but not foregrounded or clicked in this session, so the import control could not even be opened on the real user surface."
+        }
+      ],
+      "evidence": {
+        "screenshots": [
+          "evidence/settings-polish/settings-main/settings-route.png"
+        ],
+        "consoleErrors": "n/a for native-window capture",
+        "network": "n/a",
+        "log": "evidence/settings-polish/settings-main/foreground-debug.json; evidence/settings-polish/settings-main/task-subagent-error.txt"
+      },
+      "issues": "Blocked before the file-picker step because the native Tauri window was not interactable in this session."
+    }
+  ],
+  "frictions": [
+    {
+      "description": "Delegating to the `user-testing-flow-validator` Task subagent was not possible in this worker session.",
+      "resolution": "Recorded the immediate `insufficient permission to proceed` failure and continued the validation manually inside the worker."
+    },
+    {
+      "description": "The native `skills-manage` window remained on-screen but never became foreground-interactive; accessibility exposure collapsed to recursive `AXApplication`/`AXMenuBar` nodes.",
+      "resolution": "Captured the window by id with `screencapture -l`, extracted visible text with Apple Vision OCR, inspected the isolated SQLite database directly, and marked interaction-dependent assertions as blocked."
+    }
+  ],
+  "blockers": [
+    {
+      "description": "Native window foreground/input automation is blocked in this session: `AXFrontmost` remains false and synthetic input never lands on the Tauri window.",
+      "resolution": "A future rerun needs a working foregrounding/input path for the native app window or another automation surface that can drive the real Tauri UI."
+    },
+    {
+      "description": "Built-in scan directories are not seeded into the `scan_directories` table on startup, so the Settings scan-directory list cannot satisfy VAL-SET-001.",
+      "resolution": "Seed or synthesize the built-in scan-directory rows before `get_scan_directories` is used by the Settings page."
+    }
+  ],
+  "summary": "Validated 10 settings-polish assertions as far as the current environment allowed. The Settings About section passed, built-in scan directories failed because no rows were ever seeded for the page to list, and the remaining interaction-driven assertions were blocked because the native Tauri window could be captured but not foregrounded or driven with real user input in this session."
+}

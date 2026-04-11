@@ -1,0 +1,63 @@
+{
+  "milestone": "settings-polish",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 11,
+    "passed": 2,
+    "failed": 1,
+    "blocked": 8
+  },
+  "passedAssertions": [
+    "VAL-SET-006",
+    "VAL-CROSS-006"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-SET-001",
+      "reason": "The Settings page cannot list built-in scan directories because the isolated startup database never seeds any rows into `scan_directories`; the saved settings-route evidence shows no built-in directory rows."
+    }
+  ],
+  "blockedAssertions": [
+    {
+      "id": "VAL-COL-007",
+      "blockedBy": "The native Tauri window could be captured but not foregrounded or clicked in this session, so the sidebar import control could not be activated on the real user surface."
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "blockedBy": "Blocked before the Add Directory dialog could be opened because the native Settings window never became foreground-interactive in this session."
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "blockedBy": "Blocked before the Add Platform and install journey could be driven because the native Settings window never became foreground-interactive in this session."
+    },
+    {
+      "id": "VAL-CROSS-007",
+      "blockedBy": "Direct route captures showed Central Skills and Settings rendering, but actual sidebar/back-navigation interactions could not be exercised because the native Tauri window never became foreground-interactive in this session."
+    },
+    {
+      "id": "VAL-SET-002",
+      "blockedBy": "Blocked before the Add Directory dialog could be opened because the native Settings window never became foreground-interactive in this session."
+    },
+    {
+      "id": "VAL-SET-003",
+      "blockedBy": "Blocked before a removable custom-directory row could be operated because the native Settings window never became foreground-interactive in this session."
+    },
+    {
+      "id": "VAL-SET-004",
+      "blockedBy": "Blocked before the Add Platform dialog could be opened because the native Settings window never became foreground-interactive in this session."
+    },
+    {
+      "id": "VAL-SET-005",
+      "blockedBy": "Blocked by VAL-SET-004 in this session: the prerequisite custom-platform registration could not be exercised on the real user surface."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Documented that some sessions keep the Tauri window on-screen but non-frontmost, preventing AX/CGEvent interaction and forcing screenshot+OCR fallback for non-interactive evidence only.",
+      "source": "flow-report"
+    }
+  ],
+  "previousRound": null
+}
