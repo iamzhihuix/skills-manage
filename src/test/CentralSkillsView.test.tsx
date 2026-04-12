@@ -237,7 +237,7 @@ describe("CentralSkillsView", () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText("正在加载 skills...")).toBeInTheDocument();
+    expect(screen.getByText("正在加载技能...")).toBeInTheDocument();
   });
 
   // ── Search / Filter ───────────────────────────────────────────────────────
@@ -270,7 +270,7 @@ describe("CentralSkillsView", () => {
     fireEvent.change(searchInput, { target: { value: "zzz-nonexistent" } });
 
     await waitFor(() => {
-      expect(screen.getByText(/没有匹配的 skills/)).toBeInTheDocument();
+      expect(screen.getByText(/没有匹配的技能/)).toBeInTheDocument();
     });
   });
 

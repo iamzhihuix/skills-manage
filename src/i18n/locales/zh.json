@@ -30,13 +30,15 @@
     "expandSidebar": "展开侧边栏",
     "collapseSidebar": "折叠侧边栏",
     "importCollection": "导入技能集",
-    "newCollectionLabel": "新建技能集"
+    "newCollectionLabel": "新建技能集",
+    "importCollectionInput": "导入技能集 JSON 文件",
+    "mainNav": "主导航"
   },
   "platform": {
-    "searchPlaceholder": "搜索 skills...",
-    "loading": "正在加载 skills...",
-    "noSkills": "该平台暂无 skills：{{name}}",
-    "noMatch": "没有匹配的 skills「{{query}}」",
+    "searchPlaceholder": "搜索技能...",
+    "loading": "正在加载技能...",
+    "noSkills": "该平台暂无技能：{{name}}",
+    "noMatch": "没有匹配的技能「{{query}}」",
     "sourceSymlink": "中央技能库 · 符号链接",
     "sourceCopy": "独立安装 · 复制安装",
     "notFound": "未找到平台",
@@ -46,13 +48,18 @@
     "title": "中央技能库",
     "path": "~/.agents/skills/",
     "searchPlaceholder": "搜索中央技能库...",
-    "loading": "正在加载 skills...",
-    "noMatch": "没有匹配的 skills「{{query}}」",
+    "loading": "正在加载技能...",
+    "noMatch": "没有匹配的技能「{{query}}」",
     "refresh": "刷新中央技能库",
     "viewDetails": "[详情]",
     "viewDetailsLabel": "查看 {{name}} 的详情",
     "installLabel": "将 {{name}} 安装到平台",
-    "installTo": "安装到..."
+    "installTo": "安装到...",
+    "installPartialFail": "以下平台安装失败: {{platforms}}",
+    "installError": "安装失败: {{error}}",
+    "refreshError": "刷新失败: {{error}}",
+    "linked": "已链接",
+    "notLinked": "未链接"
   },
   "installDialog": {
     "title": "安装 {{name}}",
@@ -83,6 +90,7 @@
     "installStatus": "安装状态",
     "noPlatforms": "没有配置平台。",
     "installedOn": "安装于",
+    "installed": "已安装",
     "collections": "技能集",
     "addToCollection": "加入技能集",
     "preview": "SKILL.md 预览",
@@ -91,7 +99,9 @@
     "installTo": "安装到 {{name}}",
     "uninstallFrom": "从 {{name}} 卸载",
     "metadataRegion": "技能基本信息",
-    "installStatusRegion": "安装状态"
+    "installStatusRegion": "安装状态",
+    "installError": "安装失败: {{error}}",
+    "uninstallError": "卸载失败: {{error}}"
   },
   "collection": {
     "edit": "编辑",
@@ -110,15 +120,20 @@
     "addFirstSkill": "添加第一个技能",
     "removeSkillLabel": "从技能集中移除 {{name}}",
     "loading": "正在加载技能集...",
-    "goBack": "返回"
+    "goBack": "返回",
+    "removeSkillError": "移除技能失败: {{error}}",
+    "deleteConfirm": "删除技能集「{{name}}」？此操作不可撤销。",
+    "deleteError": "删除技能集失败: {{error}}",
+    "exportError": "导出失败: {{error}}",
+    "addSkillError": "添加技能失败: {{error}}"
   },
   "collectionEditor": {
-    "createTitle": "新建 Collection",
-    "editTitle": "编辑 Collection",
-    "createDesc": "为新的 Collection 输入名称和描述。",
-    "editDesc": "修改 Collection 的名称和描述。",
+    "createTitle": "新建技能集",
+    "editTitle": "编辑技能集",
+    "createDesc": "为新的技能集输入名称和描述。",
+    "editDesc": "修改技能集的名称和描述。",
     "nameLabel": "名称",
-    "namePlaceholder": "Collection 名称",
+    "namePlaceholder": "技能集名称",
     "descLabel": "描述",
     "descPlaceholder": "描述 (可选)",
     "nameRequired": "名称不能为空",
@@ -130,7 +145,7 @@
   },
   "batchInstall": {
     "title": "批量安装 — {{name}}",
-    "desc": "将此技能集中的 {{count}} 个 Skills 以 Symlink 方式安装到选中的平台。",
+    "desc": "将此技能集中的 {{count}} 个技能以符号链接方式安装到选中的平台。",
     "noPlatforms": "未检测到平台。请在设置中添加平台。",
     "notDetected": "(未检测到)",
     "succeeded": "{{succeeded}} 个成功，{{failed}} 个失败：",
@@ -141,8 +156,8 @@
     "selectPlatform": "请至少选择一个平台。"
   },
   "collectionPicker": {
-    "title": "添加到 Collection",
-    "desc": "选择要将此 Skill 添加到的 Collection。",
+    "title": "添加到技能集",
+    "desc": "选择要将此技能添加到的技能集。",
     "loading": "正在加载技能集...",
     "noCollections": "暂无技能集。请先在下方创建一个。",
     "alreadyMember": "已在其中",
@@ -153,17 +168,17 @@
     "addCount": "添加 ({{count}})"
   },
   "skillPicker": {
-    "title": "添加 Skill",
-    "desc": "从 Central Skills 中选择要添加到此 Collection 的技能。",
-    "searchPlaceholder": "搜索 skills...",
+    "title": "添加技能",
+    "desc": "从中央技能库中选择要添加到此技能集的技能。",
+    "searchPlaceholder": "搜索技能...",
     "loading": "正在加载技能...",
-    "noSkills": "Central Skills 中没有可用的技能",
+    "noSkills": "中央技能库中没有可用的技能",
     "allAdded": "所有技能已添加",
     "noMatch": "没有匹配的技能「{{query}}」",
     "cancel": "取消",
     "adding": "添加中...",
-    "addCount": "添加 {{count}} 个 Skill",
-    "add": "添加 Skill"
+    "addCount": "添加 {{count}} 个技能",
+    "add": "添加技能"
   },
   "settings": {
     "title": "设置",

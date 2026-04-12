@@ -77,7 +77,7 @@ function PlatformInstallRow({
         )}
       >
         {isInstalled ? (
-          <Check className="size-3" aria-label="installed" />
+          <Check className="size-3" aria-label={t("detail.installed")} />
         ) : (
           <span className="size-2 rounded-full bg-current opacity-40" />
         )}
@@ -236,7 +236,7 @@ export function SkillDetail() {
       // Refresh sidebar counts in background
       rescan();
     } catch (err) {
-      toast.error(`安装失败: ${String(err)}`);
+      toast.error(t("detail.installError", { error: String(err) }));
     }
   }
 
@@ -247,7 +247,7 @@ export function SkillDetail() {
       // Refresh sidebar counts in background
       rescan();
     } catch (err) {
-      toast.error(`卸载失败: ${String(err)}`);
+      toast.error(t("detail.uninstallError", { error: String(err) }));
     }
   }
 

@@ -208,7 +208,7 @@ export function Sidebar() {
         "flex flex-col shrink-0 h-full border-r border-border bg-sidebar text-sidebar-foreground transition-all duration-200",
         collapsed ? "w-14" : "w-60"
       )}
-      aria-label="Main navigation"
+      aria-label={t("sidebar.mainNav")}
       data-collapsed={collapsed}
     >
       {/* App header */}
@@ -385,7 +385,7 @@ export function Sidebar() {
             accept=".json"
             className="hidden"
             onChange={handleImportFile}
-            aria-label="Import collection JSON file"
+            aria-label={t("sidebar.importCollectionInput")}
           />
         </section>
       </div>

@@ -65,7 +65,7 @@ describe("CollectionEditor", () => {
 
   it("renders create mode when no collection is passed", () => {
     renderEditor({ collection: null });
-    expect(screen.getByText(/新建 Collection/i)).toBeInTheDocument();
+    expect(screen.getByText(/新建技能集/i)).toBeInTheDocument();
   });
 
   it("renders edit mode when a collection is passed", () => {
@@ -77,7 +77,7 @@ describe("CollectionEditor", () => {
       updated_at: "2026-04-09T00:00:00Z",
     };
     renderEditor({ collection });
-    expect(screen.getByText(/编辑 Collection/i)).toBeInTheDocument();
+    expect(screen.getByText(/编辑技能集/i)).toBeInTheDocument();
   });
 
   it("pre-fills name and description in edit mode", () => {
@@ -89,7 +89,7 @@ describe("CollectionEditor", () => {
       updated_at: "2026-04-09T00:00:00Z",
     };
     renderEditor({ collection });
-    const nameInput = screen.getByPlaceholderText(/Collection 名称/i);
+    const nameInput = screen.getByPlaceholderText(/技能集名称/i);
     expect(nameInput).toHaveValue("Frontend");
     const descInput = screen.getByPlaceholderText(/描述/i);
     expect(descInput).toHaveValue("Frontend skills");
@@ -97,7 +97,7 @@ describe("CollectionEditor", () => {
 
   it("shows empty fields in create mode", () => {
     renderEditor({ collection: null });
-    const nameInput = screen.getByPlaceholderText(/Collection 名称/i);
+    const nameInput = screen.getByPlaceholderText(/技能集名称/i);
     expect(nameInput).toHaveValue("");
   });
 
@@ -113,7 +113,7 @@ describe("CollectionEditor", () => {
 
     renderEditor({ collection: null });
 
-    const nameInput = screen.getByPlaceholderText(/Collection 名称/i);
+    const nameInput = screen.getByPlaceholderText(/技能集名称/i);
     fireEvent.change(nameInput, { target: { value: "New Collection" } });
 
     const submitButton = screen.getByRole("button", { name: /创建/i });
@@ -133,7 +133,7 @@ describe("CollectionEditor", () => {
     });
 
     renderEditor({ collection: null });
-    const nameInput = screen.getByPlaceholderText(/Collection 名称/i);
+    const nameInput = screen.getByPlaceholderText(/技能集名称/i);
     fireEvent.change(nameInput, { target: { value: "New Collection" } });
     const submitButton = screen.getByRole("button", { name: /创建/i });
     fireEvent.click(submitButton);
@@ -169,7 +169,7 @@ describe("CollectionEditor", () => {
 
     renderEditor({ collection });
 
-    const nameInput = screen.getByPlaceholderText(/Collection 名称/i);
+    const nameInput = screen.getByPlaceholderText(/技能集名称/i);
     fireEvent.change(nameInput, { target: { value: "Frontend Updated" } });
 
     const submitButton = screen.getByRole("button", { name: /保存/i });

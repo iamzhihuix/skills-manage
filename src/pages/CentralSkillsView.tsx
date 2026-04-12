@@ -110,10 +110,10 @@ export function CentralSkillsView() {
       await rescan();
       if (result.failed.length > 0) {
         const failedNames = result.failed.map((f) => f.agent_id).join(", ");
-        toast.error(`Install partially failed for: ${failedNames}`);
+        toast.error(t("central.installPartialFail", { platforms: failedNames }));
       }
     } catch (err) {
-      toast.error(`Install failed: ${String(err)}`);
+      toast.error(t("central.installError", { error: String(err) }));
     }
   }
 
@@ -124,7 +124,7 @@ export function CentralSkillsView() {
       await rescan();
       await loadCentralSkills();
     } catch (err) {
-      toast.error(`Refresh failed: ${String(err)}`);
+      toast.error(t("central.refreshError", { error: String(err) }));
     }
   }
 

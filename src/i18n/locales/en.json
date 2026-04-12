@@ -30,7 +30,9 @@
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
     "importCollection": "Import Collection",
-    "newCollectionLabel": "New Collection"
+    "newCollectionLabel": "New Collection",
+    "importCollectionInput": "Import collection JSON file",
+    "mainNav": "Main navigation"
   },
   "platform": {
     "searchPlaceholder": "Search skills...",
@@ -52,7 +54,12 @@
     "viewDetails": "[Details]",
     "viewDetailsLabel": "View details for {{name}}",
     "installLabel": "Install {{name}} to platforms",
-    "installTo": "Install to..."
+    "installTo": "Install to...",
+    "installPartialFail": "Install partially failed for: {{platforms}}",
+    "installError": "Install failed: {{error}}",
+    "refreshError": "Refresh failed: {{error}}",
+    "linked": "linked",
+    "notLinked": "not linked"
   },
   "installDialog": {
     "title": "Install {{name}}",
@@ -83,6 +90,7 @@
     "installStatus": "Installation Status",
     "noPlatforms": "No platforms configured.",
     "installedOn": "Installed",
+    "installed": "installed",
     "collections": "Collections",
     "addToCollection": "Add to collection",
     "preview": "SKILL.md Preview",
@@ -91,7 +99,9 @@
     "installTo": "Install to {{name}}",
     "uninstallFrom": "Uninstall from {{name}}",
     "metadataRegion": "Skill metadata",
-    "installStatusRegion": "Installation status"
+    "installStatusRegion": "Installation status",
+    "installError": "Install failed: {{error}}",
+    "uninstallError": "Uninstall failed: {{error}}"
   },
   "collection": {
     "edit": "Edit",
@@ -110,7 +120,12 @@
     "addFirstSkill": "Add your first skill",
     "removeSkillLabel": "Remove {{name}} from collection",
     "loading": "Loading collection...",
-    "goBack": "Go back"
+    "goBack": "Go back",
+    "removeSkillError": "Failed to remove skill: {{error}}",
+    "deleteConfirm": "Delete collection \"{{name}}\"? This cannot be undone.",
+    "deleteError": "Failed to delete collection: {{error}}",
+    "exportError": "Export failed: {{error}}",
+    "addSkillError": "Failed to add skill: {{error}}"
   },
   "collectionEditor": {
     "createTitle": "New Collection",

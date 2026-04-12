@@ -242,7 +242,7 @@ describe("SkillDetail", () => {
   it("shows checkmark for installed platforms", () => {
     renderSkillDetail();
     // Claude Code is installed (in mockDetail.installations)
-    const checkmarks = screen.getAllByLabelText("installed");
+    const checkmarks = screen.getAllByLabelText("已安装");
     expect(checkmarks.length).toBeGreaterThan(0);
   });
 

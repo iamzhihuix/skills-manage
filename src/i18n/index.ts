@@ -13,13 +13,13 @@ i18n
       zh: { translation: zh },
       en: { translation: en },
     },
-    // Default language is Chinese
-    lng: "zh",
-    fallbackLng: "en",
-    // Use localStorage to persist the language choice
+    // No hardcoded lng — let languageDetector read from localStorage.
+    // Falls back to Chinese when no preference is saved.
+    fallbackLng: "zh",
+    // Use localStorage key 'i18nextLng' (i18next default) to persist choice.
     detection: {
       order: ["localStorage", "navigator"],
-      lookupLocalStorage: "skills-manage-language",
+      lookupLocalStorage: "i18nextLng",
       caches: ["localStorage"],
     },
     interpolation: {

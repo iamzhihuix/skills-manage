@@ -15,19 +15,20 @@ interface PlatformBadgeProps {
 }
 
 function PlatformBadge({ agent, isLinked }: PlatformBadgeProps) {
+  const { t } = useTranslation();
   return (
     <div
       className={cn(
         "flex items-center gap-1 text-xs",
         isLinked ? "text-green-600 dark:text-green-400" : "text-muted-foreground/60"
       )}
-      title={`${agent.display_name}: ${isLinked ? "linked" : "not linked"}`}
+      title={`${agent.display_name}: ${isLinked ? t("central.linked") : t("central.notLinked")}`}
     >
       <PlatformIcon agentId={agent.id} className="size-3 shrink-0" size={12} />
       {isLinked ? (
-        <Check className="size-3 shrink-0" aria-label="linked" />
+        <Check className="size-3 shrink-0" aria-label={t("central.linked")} />
       ) : (
-        <X className="size-3 shrink-0" aria-label="not linked" />
+        <X className="size-3 shrink-0" aria-label={t("central.notLinked")} />
       )}
       <span className="truncate max-w-[5rem]">{agent.display_name}</span>
     </div>

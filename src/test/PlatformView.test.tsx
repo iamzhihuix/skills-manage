@@ -155,7 +155,7 @@ describe("PlatformView", () => {
     );
 
     expect(
-      screen.getByText(/该平台暂无 skills/)
+      screen.getByText(/该平台暂无技能/)
     ).toBeInTheDocument();
   });
 
@@ -189,13 +189,13 @@ describe("PlatformView", () => {
   it("renders search input", () => {
     renderPlatformView();
     expect(
-      screen.getByPlaceholderText(/搜索 skills/)
+      screen.getByPlaceholderText(/搜索技能/)
     ).toBeInTheDocument();
   });
 
   it("filters skills by name when searching", async () => {
     renderPlatformView();
-    const searchInput = screen.getByPlaceholderText(/搜索 skills/);
+    const searchInput = screen.getByPlaceholderText(/搜索技能/);
     fireEvent.change(searchInput, { target: { value: "frontend" } });
 
     await waitFor(() => {
@@ -206,7 +206,7 @@ describe("PlatformView", () => {
 
   it("filters skills by description when searching", async () => {
     renderPlatformView();
-    const searchInput = screen.getByPlaceholderText(/搜索 skills/);
+    const searchInput = screen.getByPlaceholderText(/搜索技能/);
     fireEvent.change(searchInput, { target: { value: "actionable" } });
 
     await waitFor(() => {
@@ -217,7 +217,7 @@ describe("PlatformView", () => {
 
   it("shows all skills when search is cleared", async () => {
     renderPlatformView();
-    const searchInput = screen.getByPlaceholderText(/搜索 skills/);
+    const searchInput = screen.getByPlaceholderText(/搜索技能/);
     fireEvent.change(searchInput, { target: { value: "frontend" } });
     fireEvent.change(searchInput, { target: { value: "" } });
 
@@ -229,11 +229,11 @@ describe("PlatformView", () => {
 
   it("shows empty state message when search has no results", async () => {
     renderPlatformView();
-    const searchInput = screen.getByPlaceholderText(/搜索 skills/);
+    const searchInput = screen.getByPlaceholderText(/搜索技能/);
     fireEvent.change(searchInput, { target: { value: "nonexistent-skill-xyz" } });
 
     await waitFor(() => {
-      expect(screen.getByText(/没有匹配的 skills/)).toBeInTheDocument();
+      expect(screen.getByText(/没有匹配的技能/)).toBeInTheDocument();
     });
   });
 

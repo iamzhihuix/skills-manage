@@ -91,13 +91,13 @@ export function CollectionView() {
     try {
       await removeSkillFromCollection(collectionId, skillId);
     } catch (err) {
-      toast.error(`移除 skill 失败: ${String(err)}`);
+      toast.error(t("collection.removeSkillError", { error: String(err) }));
     }
   }
 
   async function handleDelete() {
     if (!collectionId || !currentDetail) return;
-    if (!window.confirm(`Delete collection "${currentDetail.name}"? This cannot be undone.`)) {
+    if (!window.confirm(t("collection.deleteConfirm", { name: currentDetail.name }))) {
       return;
     }
     setIsDeleting(true);
@@ -107,7 +107,7 @@ export function CollectionView() {
       navigate("/central");
     } catch (err) {
       setDeleteError(String(err));
-      toast.error(`删除 Collection 失败: ${String(err)}`);
+      toast.error(t("collection.deleteError", { error: String(err) }));
     } finally {
       setIsDeleting(false);
     }
@@ -128,7 +128,7 @@ export function CollectionView() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      toast.error(`导出失败: ${String(err)}`);
+      toast.error(t("collection.exportError", { error: String(err) }));
     }
   }
 
@@ -140,7 +140,7 @@ export function CollectionView() {
         await addSkillToCollection(collectionId, skillId);
       }
     } catch (err) {
-      toast.error(`添加 skill 失败: ${String(err)}`);
+      toast.error(t("collection.addSkillError", { error: String(err) }));
     }
   }
 

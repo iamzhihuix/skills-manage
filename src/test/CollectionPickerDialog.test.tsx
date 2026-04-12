@@ -104,7 +104,7 @@ describe("CollectionPickerDialog", () => {
 
   it("renders dialog title", () => {
     renderDialog();
-    expect(screen.getByText("添加到 Collection")).toBeInTheDocument();
+    expect(screen.getByText("添加到技能集")).toBeInTheDocument();
   });
 
   it("shows all collections as checkboxes", () => {
