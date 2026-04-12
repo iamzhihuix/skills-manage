@@ -290,6 +290,9 @@ export function DiscoverView() {
     try {
       await importToCentral(skillId);
       await rescan();
+      // Refresh discovered skills list — importToCentral removes the record
+      // from the DB, so the skill will disappear from the list on reload.
+      await loadDiscoveredSkills();
       toast.success(t("discover.importSuccess"));
     } catch (err) {
       toast.error(t("discover.importError", { error: String(err) }));
@@ -322,13 +325,17 @@ export function DiscoverView() {
     _method: string
   ) {
     if (!installTargetSkill) return;
-    // For discovered skills, we directly install to the first selected agent.
+    // For discovered skills, we directly install to each selected agent.
     setImportingIds((prev) => new Set(prev).add(installTargetSkill!.id));
     try {
       for (const agentId of agentIds) {
         await importToPlatform(installTargetSkill!.id, agentId);
       }
       await rescan();
+      // Refresh discovered skills list to reflect updated install status.
+      // The Rust backend keeps discovered records after platform install,
+      // so we need to reload to show the latest is_already_central state.
+      await loadDiscoveredSkills();
       toast.success(t("discover.importSuccess"));
     } catch (err) {
       toast.error(t("discover.importError", { error: String(err) }));

@@ -147,21 +147,98 @@ fn platform_skill_patterns(_pool: &DbPool) -> Vec<(String, String, PathBuf)> {
 
 // ─── Core scan logic ──────────────────────────────────────────────────────────
 
-/// Walk a single scan root directory, looking for project-level skill dirs.
+/// Maximum recursion depth for the directory walker.
+const MAX_SCAN_DEPTH: u32 = 8;
+
+/// Directory names that should always be skipped during traversal
+/// for performance (these never contain project-level skill dirs).
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    ".git",
+    "build",
+    "dist",
+    ".cache",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    ".venv",
+    "venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".idea",
+    ".vscode",
+];
+
+/// Check whether a directory name should be skipped during traversal.
 ///
-/// For each immediate subdirectory of `root`, checks whether it contains any
-/// of the known platform skill subdirectories (e.g., `.claude/skills/`).
-/// If found, scans those skill dirs and returns `DiscoveredSkill` entries.
+/// - Always skip known heavy/irrelevant directories (node_modules, .git, etc.).
+/// - At the root level (depth 0), skip hidden directories (dot-prefixed) since
+///   they are typically user config dirs, not project directories.
+/// - At deeper levels, allow hidden directories so we can detect platform
+///   skill patterns like `.claude/skills/` inside project dirs.
+fn should_skip_dir(name: &str, depth: u32) -> bool {
+    // Always skip known heavy directories.
+    if SKIP_DIRS.contains(&name) {
+        return true;
+    }
+
+    // At root level, skip hidden directories (dot-prefixed).
+    // These are typically user config dirs (~/.config, ~/.local, etc.),
+    // not project directories containing skills.
+    if depth == 0 && name.starts_with('.') {
+        return true;
+    }
+
+    false
+}
+
+/// Recursively walk a scan root directory, looking for project-level skill dirs.
+///
+/// Traverses subdirectories up to `MAX_SCAN_DEPTH` levels deep, checking each
+/// directory for known platform skill subdirectories (e.g., `.claude/skills/`,
+/// `.cursor/skills/`, `.factory/skills/`). When a match is found, the
+/// containing directory is treated as a "project" and its skills are collected.
+///
+/// Skips hidden directories at root level (except dot-prefixed platform dirs
+/// which are matched via patterns), and always skips performance-heavy
+/// directories like `node_modules`, `.git`, `target`, `build`, `dist`.
+///
+/// The `project_path` is the directory that CONTAINS the platform dir
+/// (e.g., `~/Documents/GitHubMe/minimax-skills` for `.claude/skills/` found there).
 fn scan_root_for_projects(
     root: &Path,
     patterns: &[(String, String, PathBuf)],
     central_dir: &Path,
 ) -> Vec<DiscoveredProject> {
     let mut projects = Vec::new();
+    let mut seen_project_paths = std::collections::HashSet::new();
+    scan_root_recursive(root, patterns, central_dir, 0, &mut projects, &mut seen_project_paths);
+    projects
+}
 
-    let entries = match std::fs::read_dir(root) {
+/// Inner recursive walker. Accumulates found projects into `projects`.
+/// `seen_project_paths` prevents duplicates when the same project dir
+/// is reached via different scan roots.
+fn scan_root_recursive(
+    current_dir: &Path,
+    patterns: &[(String, String, PathBuf)],
+    central_dir: &Path,
+    depth: u32,
+    projects: &mut Vec<DiscoveredProject>,
+    seen_project_paths: &mut std::collections::HashSet<String>,
+) {
+    if depth > MAX_SCAN_DEPTH {
+        return;
+    }
+    if SCAN_CANCEL.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let entries = match std::fs::read_dir(current_dir) {
         Ok(e) => e,
-        Err(_) => return projects,
+        Err(_) => return,
     };
 
     for entry in entries.flatten() {
@@ -180,15 +257,19 @@ fn scan_root_for_projects(
             continue;
         }
 
-        let project_name = entry_path
+        let dir_name = entry_path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+            .unwrap_or("");
 
+        // Skip directories that should never be traversed.
+        if should_skip_dir(dir_name, depth) {
+            continue;
+        }
+
+        // Check if this directory is a "project" containing platform skill dirs.
         let mut project_skills: Vec<DiscoveredSkill> = Vec::new();
 
-        // Check each platform pattern inside this project dir.
         for (agent_id, display_name, rel_pattern) in patterns {
             let skill_dir = entry_path.join(rel_pattern);
 
@@ -201,6 +282,12 @@ fn scan_root_for_projects(
             for skill in scanned {
                 // Derive a unique ID that includes the project path to avoid
                 // collisions with global skills that share the same directory name.
+                let project_name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
                 let qualified_id = format!(
                     "{}__{}__{}",
                     agent_id,
@@ -227,16 +314,85 @@ fn scan_root_for_projects(
             }
         }
 
+        // If this directory contains platform skills, record it as a project.
         if !project_skills.is_empty() {
-            projects.push(DiscoveredProject {
-                project_path: entry_path.to_string_lossy().into_owned(),
-                project_name,
-                skills: project_skills,
-            });
+            let project_path_key = entry_path.to_string_lossy().into_owned();
+            if !seen_project_paths.contains(&project_path_key) {
+                seen_project_paths.insert(project_path_key.clone());
+                let project_name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                projects.push(DiscoveredProject {
+                    project_path: project_path_key,
+                    project_name,
+                    skills: project_skills,
+                });
+            }
+        }
+
+        // Continue recursion into this directory.
+        scan_root_recursive(
+            &entry_path,
+            patterns,
+            central_dir,
+            depth + 1,
+            projects,
+            seen_project_paths,
+        );
+    }
+}
+
+// ─── Cache Reconciliation ─────────────────────────────────────────────────────
+
+/// Reconcile the `discovered_skills` table after a scan.
+///
+/// For each previously discovered skill whose `project_path` falls under one of
+/// the scanned roots, check whether the skill's `dir_path` still exists on disk.
+/// If not, delete the stale record from the database.
+///
+/// Skills that were found during the current scan (identified by `found_skill_ids`)
+/// are always kept — they are fresh and valid.
+async fn reconcile_discovered_skills(
+    pool: &DbPool,
+    scan_roots: &[&ScanRoot],
+    found_skill_ids: &[String],
+) -> Result<(), String> {
+    let all_rows = db::get_all_discovered_skills(pool).await?;
+
+    let found_set: std::collections::HashSet<&str> = found_skill_ids
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+
+    for row in &all_rows {
+        // Skip skills just found in this scan — they are valid.
+        if found_set.contains(row.id.as_str()) {
+            continue;
+        }
+
+        // Only reconcile skills under the scanned roots.
+        let project_path = Path::new(&row.project_path);
+        let under_scanned_root = scan_roots.iter().any(|root| {
+            project_path.starts_with(&root.path)
+                || project_path.as_os_str() == std::ffi::OsStr::new(&root.path)
+        });
+
+        if !under_scanned_root {
+            continue;
+        }
+
+        // Check if the skill's directory still exists on disk.
+        let dir_exists = Path::new(&row.dir_path).exists();
+
+        if !dir_exists {
+            db::delete_discovered_skill(pool, &row.id).await?;
         }
     }
 
-    projects
+    Ok(())
 }
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
@@ -368,8 +524,14 @@ pub async fn start_project_scan(
 
     // Persist discovered skills to the database.
     let now = Utc::now().to_rfc3339();
+
+    // Collect all discovered skill IDs found in this scan for reconciliation.
+    let mut found_skill_ids: Vec<String> = Vec::new();
+
     for project in &all_projects {
         for skill in &project.skills {
+            found_skill_ids.push(skill.id.clone());
+
             // Check if already persisted (by qualified ID).
             let existing = db::get_discovered_skill_by_id(pool, &skill.id).await?;
             if existing.is_none() {
@@ -389,6 +551,12 @@ pub async fn start_project_scan(
             }
         }
     }
+
+    // ── Cache reconciliation ──────────────────────────────────────────────────
+    // Remove stale discovered_skills rows whose dir_path no longer exists on disk
+    // within the scanned scope (scan roots). This ensures deleted project skills
+    // don't persist in cached results.
+    reconcile_discovered_skills(pool, &enabled_roots, &found_skill_ids).await?;
 
     let total_projects = all_projects.len();
 
@@ -434,6 +602,10 @@ pub async fn get_discovered_skills(
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown");
+            // A discovered skill is "already central" if:
+            // 1. The skill directory name exists in the central skills dir, OR
+            // 2. There is a skill_installations record for this skill name
+            //    (meaning it's been installed to at least one platform).
             let is_already_central = central_dir.join(skill_dir_name).exists();
             let platform_id = row.platform_id.clone();
 
@@ -635,8 +807,11 @@ pub async fn import_discovered_skill_to_platform(
     };
     db::upsert_skill_installation(pool, &installation).await?;
 
-    // Remove the discovered skill record since it's now installed.
-    db::delete_discovered_skill(pool, &discovered_skill_id).await?;
+    // NOTE: We intentionally do NOT delete the discovered skill record here.
+    // Keeping the record allows multi-platform install (importing the same
+    // discovered skill to multiple platforms in sequence). The record will be
+    // cleaned up by cache reconciliation on the next rescan, or when the user
+    // imports it to central (which does delete the record).
 
     Ok(ImportResult {
         skill_id: skill_dir_name,
@@ -1033,11 +1208,16 @@ mod tests {
         let meta = std::fs::symlink_metadata(&link_path).unwrap();
         assert!(meta.is_symlink(), "should be a symlink");
 
-        // Verify discovered skill record was removed.
+        // Verify discovered skill record is KEPT (not deleted) after platform install.
+        // This enables multi-platform install — the record stays so it can be
+        // installed to additional platforms.
         let record = db::get_discovered_skill_by_id(&pool, "claude-code__project__my-skill")
             .await
             .unwrap();
-        assert!(record.is_none(), "discovered skill record should be removed");
+        assert!(
+            record.is_some(),
+            "discovered skill record should be kept after platform install"
+        );
     }
 
     /// Implementation of import_discovered_skill_to_platform that accepts a custom agent_dir
@@ -1105,7 +1285,9 @@ mod tests {
         };
         db::upsert_skill_installation(pool, &installation).await?;
 
-        db::delete_discovered_skill(pool, discovered_skill_id).await?;
+        // NOTE: Intentionally do NOT delete the discovered skill record.
+        // This allows multi-platform install (importing the same discovered
+        // skill to multiple platforms in sequence).
 
         Ok(ImportResult {
             skill_id: skill_dir_name,
@@ -1602,5 +1784,438 @@ mod tests {
 
         let count = db::get_discovered_project_count(&pool).await.unwrap();
         assert_eq!(count, 3, "should have 3 distinct projects");
+    }
+
+    // ── Recursive scan tests ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_recursive_scan_finds_deeply_nested_project() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let central_dir = tmp.path().join("central");
+        std::fs::create_dir_all(&central_dir).unwrap();
+
+        // Create a project nested 3 levels deep: root/org/team/my-project/.claude/skills/...
+        let project_dir = tmp.path().join("org").join("team").join("my-project");
+        let skill_dir = project_dir.join(".claude/skills/deploy-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: deploy\ndescription: Deploy stuff\n---\n\n# Deploy\n",
+        )
+        .unwrap();
+
+        let patterns = vec![(
+            "claude-code".to_string(),
+            "Claude Code".to_string(),
+            PathBuf::from(".claude/skills"),
+        )];
+
+        let projects = scan_root_for_projects(tmp.path(), &patterns, &central_dir);
+
+        assert_eq!(projects.len(), 1, "should find 1 project at depth 3");
+        assert_eq!(projects[0].project_name, "my-project");
+        assert_eq!(projects[0].skills.len(), 1);
+        assert_eq!(projects[0].skills[0].platform_id, "claude-code");
+        assert_eq!(projects[0].skills[0].name, "deploy");
+        // project_path should be the directory containing the platform dir
+        assert!(
+            projects[0].project_path.contains("my-project"),
+            "project_path should be the project dir, got: {}",
+            projects[0].project_path
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recursive_scan_skips_hidden_dirs_at_root() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let central_dir = tmp.path().join("central");
+        std::fs::create_dir_all(&central_dir).unwrap();
+
+        // A hidden directory at root level should be skipped (not traversed).
+        let hidden_project = tmp.path().join(".hidden-org").join("my-project");
+        let skill_dir = hidden_project.join(".claude/skills/deploy-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: deploy\ndescription: Deploy stuff\n---\n\n# Deploy\n",
+        )
+        .unwrap();
+
+        // A visible directory should be traversed.
+        let visible_project = tmp.path().join("visible-org").join("my-project");
+        let visible_skill_dir = visible_project.join(".claude/skills/visible-skill");
+        std::fs::create_dir_all(&visible_skill_dir).unwrap();
+        std::fs::write(
+            visible_skill_dir.join("SKILL.md"),
+            "---\nname: visible-skill\ndescription: Visible\n---\n\n# Visible\n",
+        )
+        .unwrap();
+
+        let patterns = vec![(
+            "claude-code".to_string(),
+            "Claude Code".to_string(),
+            PathBuf::from(".claude/skills"),
+        )];
+
+        let projects = scan_root_for_projects(tmp.path(), &patterns, &central_dir);
+
+        // Should only find the project in the visible directory.
+        assert_eq!(projects.len(), 1, "should only find the visible project");
+        assert_eq!(projects[0].skills[0].name, "visible-skill");
+    }
+
+    #[tokio::test]
+    async fn test_recursive_scan_skips_node_modules_and_git() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let central_dir = tmp.path().join("central");
+        std::fs::create_dir_all(&central_dir).unwrap();
+
+        // node_modules with a skill inside should NOT be found.
+        let nm_project = tmp.path().join("node_modules").join("some-pkg");
+        let nm_skill = nm_project.join(".claude/skills/hidden-skill");
+        std::fs::create_dir_all(&nm_skill).unwrap();
+        std::fs::write(
+            nm_skill.join("SKILL.md"),
+            "---\nname: hidden-skill\n---\n\n# Hidden\n",
+        )
+        .unwrap();
+
+        // .git with a skill inside should NOT be found.
+        let git_project = tmp.path().join(".git").join("subdir");
+        let git_skill = git_project.join(".claude/skills/git-skill");
+        std::fs::create_dir_all(&git_skill).unwrap();
+        std::fs::write(
+            git_skill.join("SKILL.md"),
+            "---\nname: git-skill\n---\n\n# Git\n",
+        )
+        .unwrap();
+
+        // A normal project should be found.
+        let project_dir = tmp.path().join("my-project");
+        let skill_dir = project_dir.join(".claude/skills/good-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: good-skill\ndescription: Good\n---\n\n# Good\n",
+        )
+        .unwrap();
+
+        let patterns = vec![(
+            "claude-code".to_string(),
+            "Claude Code".to_string(),
+            PathBuf::from(".claude/skills"),
+        )];
+
+        let projects = scan_root_for_projects(tmp.path(), &patterns, &central_dir);
+
+        assert_eq!(projects.len(), 1, "should only find the good project");
+        assert_eq!(projects[0].skills[0].name, "good-skill");
+    }
+
+    #[tokio::test]
+    async fn test_recursive_scan_finds_multiple_projects_at_different_depths() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let central_dir = tmp.path().join("central");
+        std::fs::create_dir_all(&central_dir).unwrap();
+
+        // Project at depth 1 (immediate child).
+        let project1 = tmp.path().join("project-1");
+        let skill1 = project1.join(".claude/skills/skill-1");
+        std::fs::create_dir_all(&skill1).unwrap();
+        std::fs::write(
+            skill1.join("SKILL.md"),
+            "---\nname: skill-1\ndescription: First\n---\n\n# First\n",
+        )
+        .unwrap();
+
+        // Project at depth 3 (nested under org/team).
+        let project2 = tmp.path().join("org").join("team").join("project-2");
+        let skill2 = project2.join(".factory/skills/skill-2");
+        std::fs::create_dir_all(&skill2).unwrap();
+        std::fs::write(
+            skill2.join("SKILL.md"),
+            "---\nname: skill-2\ndescription: Second\n---\n\n# Second\n",
+        )
+        .unwrap();
+
+        let patterns = vec![
+            (
+                "claude-code".to_string(),
+                "Claude Code".to_string(),
+                PathBuf::from(".claude/skills"),
+            ),
+            (
+                "factory-droid".to_string(),
+                "Factory Droid".to_string(),
+                PathBuf::from(".factory/skills"),
+            ),
+        ];
+
+        let projects = scan_root_for_projects(tmp.path(), &patterns, &central_dir);
+
+        assert_eq!(projects.len(), 2, "should find 2 projects at different depths");
+        let names: Vec<&str> = projects.iter().map(|p| p.project_name.as_str()).collect();
+        assert!(names.contains(&"project-1"), "should find project-1");
+        assert!(names.contains(&"project-2"), "should find project-2");
+    }
+
+    #[tokio::test]
+    async fn test_recursive_scan_respects_max_depth() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let central_dir = tmp.path().join("central");
+        std::fs::create_dir_all(&central_dir).unwrap();
+
+        // Create a project deeper than MAX_SCAN_DEPTH.
+        // MAX_SCAN_DEPTH = 8, so depth 10 should not be reached.
+        let mut deep_path = tmp.path().to_path_buf();
+        for i in 0..10 {
+            deep_path = deep_path.join(format!("level-{}", i));
+        }
+        let skill_dir = deep_path.join(".claude/skills/deep-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: deep-skill\ndescription: Too deep\n---\n\n# Deep\n",
+        )
+        .unwrap();
+
+        let patterns = vec![(
+            "claude-code".to_string(),
+            "Claude Code".to_string(),
+            PathBuf::from(".claude/skills"),
+        )];
+
+        let projects = scan_root_for_projects(tmp.path(), &patterns, &central_dir);
+
+        assert!(
+            projects.is_empty(),
+            "should not find projects beyond MAX_SCAN_DEPTH"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_should_skip_dir_rules() {
+        // Always-skipped directories.
+        assert!(should_skip_dir("node_modules", 0));
+        assert!(should_skip_dir("node_modules", 5));
+        assert!(should_skip_dir("target", 0));
+        assert!(should_skip_dir("target", 3));
+        assert!(should_skip_dir(".git", 0));
+        assert!(should_skip_dir(".git", 5));
+        assert!(should_skip_dir("build", 0));
+        assert!(should_skip_dir("dist", 0));
+        assert!(should_skip_dir("__pycache__", 0));
+        assert!(should_skip_dir(".cache", 0));
+
+        // Hidden dirs at root level (depth 0) should be skipped.
+        assert!(should_skip_dir(".config", 0));
+        assert!(should_skip_dir(".local", 0));
+        assert!(should_skip_dir(".hidden-project", 0));
+
+        // Hidden dirs at deeper levels should NOT be skipped
+        // (they might contain platform patterns like .claude).
+        assert!(!should_skip_dir(".claude", 1));
+        assert!(!should_skip_dir(".hidden-project", 2));
+
+        // Normal directories should never be skipped.
+        assert!(!should_skip_dir("my-project", 0));
+        assert!(!should_skip_dir("src", 0));
+        assert!(!should_skip_dir("Documents", 0));
+        assert!(!should_skip_dir("projects", 1));
+    }
+
+    // ── Cache reconciliation tests ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_cache_reconciliation_removes_stale_skills() {
+        let pool = setup_test_db().await;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Create a real skill on disk under the scan root.
+        let project_dir = tmp.path().join("project");
+        let skill_dir = project_dir.join(".claude/skills/real-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: real-skill\ndescription: Exists\n---\n\n# Real\n",
+        )
+        .unwrap();
+
+        // Insert a discovered skill for a path that EXISTS.
+        db::insert_discovered_skill(
+            &pool,
+            "claude-code__project__real-skill",
+            "real-skill",
+            Some("Exists"),
+            &skill_dir.join("SKILL.md").to_string_lossy(),
+            &skill_dir.to_string_lossy(),
+            &project_dir.to_string_lossy(),
+            "project",
+            "claude-code",
+            &now,
+        )
+        .await
+        .unwrap();
+
+        // Insert a discovered skill whose project_path is under the scan root
+        // but whose dir_path no longer exists on disk.
+        let stale_project_dir = tmp.path().join("stale-project");
+        let stale_skill_dir = stale_project_dir.join(".claude/skills/stale-skill");
+        // NOTE: We do NOT create the stale directory on disk.
+        db::insert_discovered_skill(
+            &pool,
+            "claude-code__stale-project__stale-skill",
+            "stale-skill",
+            Some("Deleted"),
+            &stale_skill_dir.join("SKILL.md").to_string_lossy(),
+            &stale_skill_dir.to_string_lossy(),
+            &stale_project_dir.to_string_lossy(),
+            "stale-project",
+            "claude-code",
+            &now,
+        )
+        .await
+        .unwrap();
+
+        // Simulate a scan: the real skill was found, the stale one was not.
+        let scan_root = ScanRoot {
+            path: tmp.path().to_string_lossy().into_owned(),
+            label: "test".to_string(),
+            exists: true,
+            enabled: true,
+        };
+
+        let found_ids = vec!["claude-code__project__real-skill".to_string()];
+
+        reconcile_discovered_skills(&pool, &[&scan_root], &found_ids)
+            .await
+            .unwrap();
+
+        // The real skill should still be in the DB.
+        let real = db::get_discovered_skill_by_id(&pool, "claude-code__project__real-skill")
+            .await
+            .unwrap();
+        assert!(real.is_some(), "real skill should remain in DB");
+
+        // The stale skill should be removed from the DB.
+        let stale = db::get_discovered_skill_by_id(&pool, "claude-code__stale-project__stale-skill")
+            .await
+            .unwrap();
+        assert!(stale.is_none(), "stale skill should be removed from DB");
+    }
+
+    #[tokio::test]
+    async fn test_cache_reconciliation_only_affects_scanned_scope() {
+        let pool = setup_test_db().await;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let now = Utc::now().to_rfc3339();
+
+        // Insert a stale skill whose project_path is NOT under the scanned root.
+        db::insert_discovered_skill(
+            &pool,
+            "claude-code__other__stale-skill",
+            "stale-skill",
+            Some("Outside scope"),
+            "/other/location/.claude/skills/stale-skill/SKILL.md",
+            "/other/location/.claude/skills/stale-skill",
+            "/other/location",
+            "other",
+            "claude-code",
+            &now,
+        )
+        .await
+        .unwrap();
+
+        // Scan a different root — the stale skill is outside the scope.
+        let scan_root = ScanRoot {
+            path: tmp.path().to_string_lossy().into_owned(),
+            label: "test".to_string(),
+            exists: true,
+            enabled: true,
+        };
+
+        let found_ids: Vec<String> = vec![];
+
+        reconcile_discovered_skills(&pool, &[&scan_root], &found_ids)
+            .await
+            .unwrap();
+
+        // The stale skill should still be in the DB (outside scanned scope).
+        let outside = db::get_discovered_skill_by_id(&pool, "claude-code__other__stale-skill")
+            .await
+            .unwrap();
+        assert!(
+            outside.is_some(),
+            "stale skill outside scan scope should remain in DB"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multi_platform_install_keeps_discovered_record() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pool = setup_test_db().await;
+
+        // Set up two agent dirs.
+        let agent_dir_a = tmp.path().join("agent-a-skills");
+        let agent_dir_b = tmp.path().join("agent-b-skills");
+        std::fs::create_dir_all(&agent_dir_a).unwrap();
+        std::fs::create_dir_all(&agent_dir_b).unwrap();
+
+        // Create a discovered skill.
+        let skill_dir = tmp.path().join("project/.claude/skills/my-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: my-skill\ndescription: A test skill\n---\n\n# My Skill\n",
+        )
+        .unwrap();
+
+        let now = Utc::now().to_rfc3339();
+        db::insert_discovered_skill(
+            &pool,
+            "claude-code__project__my-skill",
+            "my-skill",
+            Some("A test skill"),
+            &skill_dir.join("SKILL.md").to_string_lossy(),
+            &skill_dir.to_string_lossy(),
+            &tmp.path().join("project").to_string_lossy(),
+            "project",
+            "claude-code",
+            &now,
+        )
+        .await
+        .unwrap();
+
+        // Import to first platform.
+        let result_a = import_discovered_skill_to_platform_impl(
+            &pool,
+            "claude-code__project__my-skill",
+            "agent-a",
+            &agent_dir_a,
+        )
+        .await;
+        assert!(result_a.is_ok(), "first import should succeed");
+
+        // Import to second platform — this should also succeed because
+        // the discovered record is NOT deleted after platform install.
+        let result_b = import_discovered_skill_to_platform_impl(
+            &pool,
+            "claude-code__project__my-skill",
+            "agent-b",
+            &agent_dir_b,
+        )
+        .await;
+        assert!(result_b.is_ok(), "second import should succeed");
+
+        // Both symlinks should exist.
+        assert!(agent_dir_a.join("my-skill").exists());
+        assert!(agent_dir_b.join("my-skill").exists());
+
+        // Discovered record should still exist.
+        let record = db::get_discovered_skill_by_id(&pool, "claude-code__project__my-skill")
+            .await
+            .unwrap();
+        assert!(record.is_some(), "discovered record should be kept after platform installs");
     }
 }

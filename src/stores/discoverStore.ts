@@ -277,23 +277,10 @@ export const useDiscoverStore = create<DiscoverState>((set, get) => ({
         "import_discovered_skill_to_platform",
         { discoveredSkillId: skillId, agentId }
       );
-      // Remove the skill from discovered results.
-      set((state) => {
-        const updatedProjects = state.discoveredProjects
-          .map((p) => ({
-            ...p,
-            skills: p.skills.filter((s) => s.id !== skillId),
-          }))
-          .filter((p) => p.skills.length > 0);
-        const totalSkills = updatedProjects.reduce((sum, p) => sum + p.skills.length, 0);
-        const newSelection = new Set(state.selectedSkillIds);
-        newSelection.delete(skillId);
-        return {
-          discoveredProjects: updatedProjects,
-          totalSkillsFound: totalSkills,
-          selectedSkillIds: newSelection,
-        };
-      });
+      // NOTE: We do NOT remove the skill from discovered results here because
+      // the Rust backend no longer deletes the discovered record on platform
+      // install (to support multi-platform install). The skill stays in the
+      // list and will be shown with updated status after the next reload.
       return result;
     } catch (err) {
       set({ error: String(err) });
