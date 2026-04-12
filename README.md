@@ -31,7 +31,9 @@ Custom platforms can be added through Settings.
 - **Skill Detail** — View skill content with full markdown preview
 - **Collections** — Create, edit, and delete skill collections; batch-install to platforms; export/import as JSON
 - **Settings** — Configure custom scan directories and custom platforms
-- **Responsive Sidebar** — Collapsible navigation with platform grouping
+- **Catppuccin Themes** — 4 switchable flavors (Mocha, Macchiato, Frappé, Latte) with instant switching and persistence
+- **i18n** — Chinese and English language support with persistent preference
+- **Responsive Sidebar** — Collapsible navigation with platform grouping and SVG platform icons
 - **First-Visit Guidance** — Onboarding flow for new users
 - **Error Toasts** — User-friendly error notifications via sonner
 
@@ -44,6 +46,8 @@ Custom platforms can be added through Settings.
 | UI components | shadcn/ui, Lucide icons |
 | State management | Zustand |
 | Markdown | react-markdown |
+| i18n | react-i18next, i18next-browser-languagedetector |
+| Theming | Catppuccin 4-flavor palette |
 | Backend | Rust (serde, sqlx, chrono, uuid) |
 | Database | SQLite via sqlx (WAL mode) |
 | Routing | react-router-dom v7 |
@@ -73,7 +77,7 @@ The Vite dev server runs on port **24200**.
 
 ## Testing
 
-### Frontend (260 tests)
+### Frontend (297 tests)
 
 ```bash
 pnpm test          # Vitest + React Testing Library
@@ -106,7 +110,8 @@ skills-manage/
 │   │   ├── platform/           # Platform skill cards
 │   │   ├── settings/           # Settings components
 │   │   └── ui/                 # shadcn/ui primitives
-│   ├── stores/                 # Zustand state stores
+│   ├── stores/                 # Zustand state stores (including themeStore)
+│   ├── i18n/                   # i18n config + locale files (zh, en)
 │   ├── test/                   # Test files + setup
 │   └── types/                  # TypeScript type definitions
 ├── src-tauri/                  # Rust backend
