@@ -15,6 +15,11 @@ vi.mock("../stores/platformStore", () => ({
 
 vi.mock("../stores/themeStore", () => ({
   useThemeStore: vi.fn(),
+  ACCENT_NAMES: [
+    "rosewater", "flamingo", "pink", "mauve", "red", "maroon",
+    "peach", "yellow", "green", "teal", "sky", "sapphire",
+    "blue", "lavender",
+  ],
 }));
 
 import { useSettingsStore } from "../stores/settingsStore";
@@ -77,6 +82,8 @@ function setupMocks({
   rescan = vi.fn(),
   flavor = "mocha" as const,
   setFlavor = vi.fn(),
+  accent = "lavender" as const,
+  setAccent = vi.fn(),
 } = {}) {
   vi.mocked(useSettingsStore).mockImplementation((selector) =>
     selector({
@@ -109,6 +116,8 @@ function setupMocks({
     selector({
       flavor,
       setFlavor,
+      accent,
+      setAccent,
       init: vi.fn(),
     })
   );
@@ -448,5 +457,49 @@ describe("SettingsView", () => {
       const dot = btn.querySelector(".rounded-full");
       expect(dot).toBeTruthy();
     }
+  });
+
+  // ── Accent Color Picker ──────────────────────────────────────────────────
+
+  it("shows accent color label in about section", () => {
+    setupMocks();
+    renderSettingsView();
+    expect(screen.getByText("强调色")).toBeTruthy();
+  });
+
+  it("renders 14 accent color swatches", () => {
+    setupMocks();
+    renderSettingsView();
+    const swatches = screen.getAllByRole("radio");
+    expect(swatches).toHaveLength(14);
+  });
+
+  it("active accent swatch has aria-checked=true", () => {
+    setupMocks({ accent: "lavender" });
+    renderSettingsView();
+    const lavenderSwatch = screen.getByRole("radio", { name: "薰衣草" });
+    expect(lavenderSwatch).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("inactive accent swatch has aria-checked=false", () => {
+    setupMocks({ accent: "lavender" });
+    renderSettingsView();
+    const greenSwatch = screen.getByRole("radio", { name: "绿色" });
+    expect(greenSwatch).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("clicking an accent swatch calls setAccent", () => {
+    const setAccent = vi.fn();
+    setupMocks({ accent: "lavender", setAccent });
+    renderSettingsView();
+    fireEvent.click(screen.getByRole("radio", { name: "绿色" }));
+    expect(setAccent).toHaveBeenCalledWith("green");
+  });
+
+  it("accent swatches use CSS custom properties for background color", () => {
+    setupMocks();
+    renderSettingsView();
+    const rosewaterSwatch = screen.getByRole("radio", { name: "玫瑰水" });
+    expect(rosewaterSwatch.style.backgroundColor).toBe("var(--ctp-rosewater)");
   });
 });

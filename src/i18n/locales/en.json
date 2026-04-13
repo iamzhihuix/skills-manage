@@ -214,6 +214,23 @@
     "macchiato": "Macchiato",
     "frappe": "Frappé",
     "latte": "Latte",
+    "accentColor": "Accent Color",
+    "accent": {
+      "rosewater": "Rosewater",
+      "flamingo": "Flamingo",
+      "pink": "Pink",
+      "mauve": "Mauve",
+      "red": "Red",
+      "maroon": "Maroon",
+      "peach": "Peach",
+      "yellow": "Yellow",
+      "green": "Green",
+      "teal": "Teal",
+      "sky": "Sky",
+      "sapphire": "Sapphire",
+      "blue": "Blue",
+      "lavender": "Lavender"
+    },
     "language": "Language",
     "chinese": "中文",
     "english": "English"

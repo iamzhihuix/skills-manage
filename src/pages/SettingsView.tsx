@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Pencil, Loader2, FolderOpen, Cpu, Info, Database, Globe, Palette } from "lucide-react";
+import { Plus, Trash2, Pencil, Loader2, FolderOpen, Cpu, Info, Database, Globe, Palette, Droplets } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useThemeStore, CatppuccinFlavor } from "@/stores/themeStore";
+import { useThemeStore, CatppuccinFlavor, CatppuccinAccent, ACCENT_NAMES } from "@/stores/themeStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { AddDirectoryDialog } from "@/components/settings/AddDirectoryDialog";
 import { PlatformDialog } from "@/components/settings/PlatformDialog";
@@ -25,12 +25,34 @@ import { AgentWithStatus, ScanDirectory } from "@/types";
 const APP_VERSION = "0.1.0";
 const DB_PATH = "~/.skillsmanage/db.sqlite";
 
-/** Catppuccin Green hex per flavor — used for visual preview dots on flavor buttons. */
+/** Catppuccin Lavender hex per flavor — used for visual preview dots on flavor buttons (default accent). */
 const FLAVOR_COLORS: Record<CatppuccinFlavor, string> = {
-  mocha: "#a6e3a1",
-  macchiato: "#a6da95",
-  frappe: "#a6d189",
-  latte: "#40a02b",
+  mocha: "#b4befe",
+  macchiato: "#b7bdf8",
+  frappe: "#babbf1",
+  latte: "#7287fd",
+};
+
+/**
+ * Mapping of accent name → CSS custom property name.
+ * These are resolved at runtime via getComputedStyle to show the
+ * actual color for the current flavor.
+ */
+const CTP_VAR_MAP: Record<CatppuccinAccent, string> = {
+  rosewater: "--ctp-rosewater",
+  flamingo: "--ctp-flamingo",
+  pink: "--ctp-pink",
+  mauve: "--ctp-mauve",
+  red: "--ctp-red",
+  maroon: "--ctp-maroon",
+  peach: "--ctp-peach",
+  yellow: "--ctp-yellow",
+  green: "--ctp-green",
+  teal: "--ctp-teal",
+  sky: "--ctp-sky",
+  sapphire: "--ctp-sapphire",
+  blue: "--ctp-blue",
+  lavender: "--ctp-lavender",
 };
 
 const FLAVOR_ORDER: CatppuccinFlavor[] = ["mocha", "macchiato", "frappe", "latte"];
@@ -161,6 +183,8 @@ export function SettingsView() {
 
   const flavor = useThemeStore((s) => s.flavor);
   const setFlavor = useThemeStore((s) => s.setFlavor);
+  const accent = useThemeStore((s) => s.accent);
+  const setAccent = useThemeStore((s) => s.setAccent);
   const rescan = usePlatformStore((s) => s.rescan);
 
   // Custom agents are those that are not built-in.
@@ -450,6 +474,36 @@ export function SettingsView() {
                         {t(`settings.${f}`)}
                       </Button>
                     ))}
+                  </div>
+                </div>
+              </div>
+              {/* ── Accent Color Picker ─────────────────────────────────── */}
+              <div className="flex items-center gap-3">
+                <Droplets className="size-4 text-muted-foreground shrink-0" />
+                <div className="flex-1">
+                  <div className="text-xs text-muted-foreground mb-1.5">{t("settings.accentColor")}</div>
+                  <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={t("settings.accentColor")}>
+                    {ACCENT_NAMES.map((name) => {
+                      const ctpVar = CTP_VAR_MAP[name];
+                      const isActive = accent === name;
+                      return (
+                        <button
+                          key={name}
+                          type="button"
+                          role="radio"
+                          aria-checked={isActive}
+                          aria-label={t(`settings.accent.${name}`)}
+                          title={t(`settings.accent.${name}`)}
+                          onClick={() => setAccent(name)}
+                          className={`relative size-6 rounded-full transition-all cursor-pointer
+                            ${isActive
+                              ? "ring-2 ring-ring ring-offset-2 ring-offset-background scale-110"
+                              : "ring-1 ring-border hover:scale-105 hover:ring-2 hover:ring-ring/50"
+                            }`}
+                          style={{ backgroundColor: `var(${ctpVar})` }}
+                        />
+                      );
+                    })}
                   </div>
                 </div>
               </div>

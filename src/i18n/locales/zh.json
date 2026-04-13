@@ -214,6 +214,23 @@
     "macchiato": "Macchiato",
     "frappe": "Frappé",
     "latte": "Latte",
+    "accentColor": "强调色",
+    "accent": {
+      "rosewater": "玫瑰水",
+      "flamingo": "火烈鸟",
+      "pink": "粉色",
+      "mauve": "紫色",
+      "red": "红色",
+      "maroon": "栗色",
+      "peach": "桃色",
+      "yellow": "黄色",
+      "green": "绿色",
+      "teal": "青色",
+      "sky": "天蓝",
+      "sapphire": "蓝宝石",
+      "blue": "蓝色",
+      "lavender": "薰衣草"
+    },
     "language": "语言",
     "chinese": "中文",
     "english": "English"
