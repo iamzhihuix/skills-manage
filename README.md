@@ -4,7 +4,7 @@ A cross-platform desktop app for managing AI coding agent skills across multiple
 
 ## Overview
 
-**skills-manage** provides a unified interface to discover, organize, and install AI agent skills (markdown instruction files) across 11 built-in platforms. It follows the [Agent Skills](https://github.com/anthropics/agent-skills) open standard with a central canonical directory at `~/.agents/skills/`. Skills are installed to individual platforms via symlinks, so a single source of truth drives all your AI coding tools.
+**skills-manage** provides a unified interface to discover, organize, and install AI agent skills (markdown instruction files) across 28 built-in platforms. It follows the [Agent Skills](https://github.com/anthropics/agent-skills) open standard with a central canonical directory at `~/.agents/skills/`. Skills are installed to individual platforms via symlinks, so a single source of truth drives all your AI coding tools.
 
 ## Supported Platforms
 
@@ -16,10 +16,27 @@ A cross-platform desktop app for managing AI coding agent skills across multiple
 | Coding | Gemini CLI | `~/.gemini/skills/` |
 | Coding | Trae | `~/.trae/skills/` |
 | Coding | Factory Droid | `~/.factory/skills/` |
+| Coding | Junie | `~/.junie/skills/` |
+| Coding | Qwen | `~/.qwen/skills/` |
+| Coding | Trae CN | `~/.trae-cn/skills/` |
+| Coding | Windsurf | `~/.windsurf/skills/` |
+| Coding | Qoder | `~/.qoder/skills/` |
+| Coding | Augment | `~/.augment/skills/` |
+| Coding | OpenCode | `~/.opencode/skills/` |
+| Coding | KiloCode | `~/.kilocode/skills/` |
+| Coding | OB1 | `~/.ob1/skills/` |
+| Coding | Amp | `~/.amp/skills/` |
+| Coding | Kiro | `~/.kiro/skills/` |
+| Coding | CodeBuddy | `~/.codebuddy/skills/` |
+| Coding | Hermes | `~/.hermes/skills/` |
+| Coding | Copilot | `~/.copilot/skills/` |
+| Coding | Aider | `~/.aider/skills/` |
 | Lobster | OpenClaw (开爪) | `~/.openclaw/skills/` |
 | Lobster | QClaw (千爪) | `~/.qclaw/skills/` |
 | Lobster | EasyClaw (简爪) | `~/.easyclaw/skills/` |
-| Lobster | AutoClaw/WorkBuddy (打工搭子) | `~/.workbuddy/skills/` |
+| Lobster | EasyClaw V2 | `~/.easyclaw-20260322-01/skills/` |
+| Lobster | AutoClaw | `~/.openclaw-autoclaw/skills/` |
+| Lobster | WorkBuddy (打工搭子) | `~/.workbuddy/skills-marketplace/skills/` |
 | Central | Central Skills | `~/.agents/skills/` |
 
 Custom platforms can be added through Settings.
@@ -31,6 +48,7 @@ Custom platforms can be added through Settings.
 - **Skill Detail** — View skill content with full markdown preview
 - **Collections** — Create, edit, and delete skill collections; batch-install to platforms; export/import as JSON
 - **Settings** — Configure custom scan directories and custom platforms
+- **Discover** — Full-disk project-level skill scanner with dedicated Discover page, recursive scanning, configurable scan roots, import to central, stop scan, and cached results
 - **Catppuccin Themes** — 4 switchable flavors (Mocha, Macchiato, Frappé, Latte) with instant switching and persistence
 - **i18n** — Chinese and English language support with persistent preference
 - **Responsive Sidebar** — Collapsible navigation with platform grouping and SVG platform icons
@@ -77,7 +95,7 @@ The Vite dev server runs on port **24200**.
 
 ## Testing
 
-### Frontend (297 tests)
+### Frontend (385 tests)
 
 ```bash
 pnpm test          # Vitest + React Testing Library
@@ -85,7 +103,7 @@ pnpm typecheck     # TypeScript type checking
 pnpm lint          # ESLint
 ```
 
-### Rust backend (181 tests)
+### Rust backend (214 tests)
 
 ```bash
 cd src-tauri && cargo test
@@ -102,11 +120,13 @@ skills-manage/
 │   │   ├── CentralSkillsView.tsx
 │   │   ├── CollectionView.tsx
 │   │   ├── SkillDetail.tsx
+│   │   ├── DiscoverView.tsx
 │   │   └── SettingsView.tsx
 │   ├── components/             # UI components
 │   │   ├── layout/             # Sidebar, app shell
 │   │   ├── central/            # Central skills components
 │   │   ├── collection/         # Collection editor, picker
+│   │   ├── discover/           # Discover scan components
 │   │   ├── platform/           # Platform skill cards
 │   │   ├── settings/           # Settings components
 │   │   └── ui/                 # shadcn/ui primitives
@@ -125,6 +145,7 @@ skills-manage/
 │           ├── linker.rs       # Symlink install/uninstall
 │           ├── skills.rs       # Skill queries + content reading
 │           ├── collections.rs  # Collection management
+│           ├── discover.rs     # Full-disk skill discovery scanner
 │           └── settings.rs     # Scan dirs + app settings
 └── public/                     # Static assets
 ```
