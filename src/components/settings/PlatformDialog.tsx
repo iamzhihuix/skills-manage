@@ -59,7 +59,7 @@ export function PlatformDialog({
       setDirError(null);
       setError(null);
     }
-  }, [open, platform]);
+  }, [open, platform, isEditMode]);
 
   async function handleSubmit() {
     const trimmedName = displayName.trim();

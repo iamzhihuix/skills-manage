@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Loader2, Download, Bot, FileText, Code } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -42,16 +43,7 @@ export function SkillPreviewDialog({
   const [explanation, setExplanation] = useState<string | null>(null);
   const [isExplaining, setIsExplaining] = useState(false);
 
-  useEffect(() => {
-    if (open && downloadUrl) {
-      setContent("");
-      setExplanation(null);
-      setViewMode("markdown");
-      fetchContent();
-    }
-  }, [open, downloadUrl]);
-
-  async function fetchContent() {
+  const fetchContent = useCallback(async () => {
     setIsLoadingContent(true);
     try {
       const resp = await fetch(downloadUrl);
@@ -62,7 +54,16 @@ export function SkillPreviewDialog({
     } finally {
       setIsLoadingContent(false);
     }
-  }
+  }, [downloadUrl]);
+
+  useEffect(() => {
+    if (open && downloadUrl) {
+      setContent("");
+      setExplanation(null);
+      setViewMode("markdown");
+      fetchContent();
+    }
+  }, [open, downloadUrl, fetchContent]);
 
   async function handleExplain() {
     if (!content) return;
@@ -152,7 +153,9 @@ export function SkillPreviewDialog({
             </div>
           ) : viewMode === "markdown" ? (
             <div className="prose prose-sm dark:prose-invert max-w-none markdown-body">
-              <ReactMarkdown>{displayContent}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {displayContent}
+              </ReactMarkdown>
             </div>
           ) : (
             <pre className="text-xs bg-muted/30 rounded-md p-4 overflow-auto whitespace-pre-wrap">

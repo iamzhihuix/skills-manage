@@ -15,6 +15,7 @@ import { Collection } from "../types";
 const mockCreateCollection = vi.fn();
 const mockUpdateCollection = vi.fn();
 const mockOnOpenChange = vi.fn();
+const mockUseCollectionStore = vi.mocked(useCollectionStore);
 
 function buildStoreState(overrides = {}) {
   return {
@@ -41,7 +42,7 @@ function renderEditor(props: {
   open?: boolean;
   collection?: Collection | null;
 } = {}) {
-  vi.mocked(useCollectionStore).mockImplementation((selector) =>
+  mockUseCollectionStore.mockImplementation((selector) =>
     selector(buildStoreState())
   );
 
@@ -59,6 +60,7 @@ function renderEditor(props: {
 describe("CollectionEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockUseCollectionStore.mockReset();
   });
 
   // ── Rendering ─────────────────────────────────────────────────────────────
