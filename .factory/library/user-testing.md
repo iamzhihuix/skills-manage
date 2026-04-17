@@ -55,6 +55,7 @@
 - When validating denial handling, confirm canonical skill storage remains unchanged after the failed preview/import attempt.
 - For the preview-layout follow-up, validate a verbose multi-skill repo on a real Tauri surface and confirm the dialog stays inside the app window with header/footer actions still visible while the middle body scrolls.
 - Confirm the preview step uses a left summary list plus right selected-skill detail pane, and that long descriptions are not fully expanded for every item in the list at once.
+- For the width-expansion follow-up, validate on a real desktop/Tauri surface that the preview shell spans most of the app window and gives both panes materially more horizontal room while remaining inside the viewport.
 - Public network access to GitHub endpoints used by the backend preview/import path must be available during validation.
 - **Single-skill repo:** `https://github.com/dorukardahan/twitterapi-io-skill`
 - **Default multi-skill repo:** `https://github.com/anthropics/skills`
