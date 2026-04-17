@@ -1,5 +1,11 @@
 import { RefObject, ReactNode, useEffect, useId } from "react";
-import { Dialog, DialogOverlay, DialogPortal } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogOverlay,
+  DialogPortal,
+} from "@/components/ui/dialog";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { SkillDetailView } from "@/components/skill/SkillDetailView";
 import { Button } from "@/components/ui/button";
 import { XIcon } from "lucide-react";
@@ -23,26 +29,6 @@ export function SkillDetailDrawer({
   const titleId = useId();
 
   useEffect(() => {
-    if (open || typeof document === "undefined") {
-      return;
-    }
-
-    const clearLingeringBackdrop = () => {
-      for (const element of Array.from(
-        document.querySelectorAll<HTMLElement>("[data-base-ui-inert]")
-      )) {
-        element.remove();
-      }
-    };
-
-    clearLingeringBackdrop();
-
-    return () => {
-      clearLingeringBackdrop();
-    };
-  }, [open]);
-
-  useEffect(() => {
     if (open) {
       return;
     }
@@ -53,32 +39,35 @@ export function SkillDetailDrawer({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPortal keepMounted={false}>
-        <DialogOverlay
-          data-testid="skill-detail-drawer-overlay"
-          className="bg-black/30"
-        />
         {open && skillId ? (
-          <div className="fixed inset-0 z-50 flex justify-end pointer-events-none">
-            <div
+          <>
+            <DialogOverlay
+              data-testid="skill-detail-drawer-overlay"
+              className="bg-black/30"
+            />
+            <DialogPrimitive.Popup
               role="dialog"
               aria-modal="true"
               aria-labelledby={titleId}
               data-testid="skill-detail-drawer"
               className={cn(
-                "pointer-events-auto flex h-full w-screen flex-col bg-background shadow-2xl ring-1 ring-border outline-none",
+                "fixed inset-y-0 right-0 z-50 flex h-full w-screen flex-col bg-background shadow-2xl ring-1 ring-border outline-none",
                 "md:w-[min(900px,90vw)]"
               )}
             >
               <div className="flex h-10 shrink-0 items-center justify-end border-b border-border px-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Close"
-                  onClick={() => onOpenChange(false)}
+                <DialogClose
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Close"
+                    />
+                  }
                 >
                   <XIcon />
-                </Button>
+                </DialogClose>
               </div>
               <div className="min-h-0 flex-1">
                 {children ?? (
@@ -91,8 +80,8 @@ export function SkillDetailDrawer({
                   />
                 )}
               </div>
-            </div>
-          </div>
+            </DialogPrimitive.Popup>
+          </>
         ) : null}
       </DialogPortal>
     </Dialog>

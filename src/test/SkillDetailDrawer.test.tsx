@@ -202,6 +202,24 @@ describe("SkillDetailDrawer", () => {
     });
   });
 
+  it("removes panel and overlay together when closed from the shell", async () => {
+    render(<TestHarness />);
+
+    const closeButton = await screen.findByRole("button", { name: /close/i });
+    const overlay = screen.getByTestId("skill-detail-drawer-overlay");
+    const drawer = screen.getByTestId("skill-detail-drawer");
+
+    expect(overlay).toBeInTheDocument();
+    expect(drawer).toBeInTheDocument();
+
+    fireEvent.click(closeButton);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("skill-detail-drawer")).toBeNull();
+      expect(screen.queryByTestId("skill-detail-drawer-overlay")).toBeNull();
+    });
+  });
+
   it("wires aria-labelledby to the SkillDetailView heading", async () => {
     render(<TestHarness />);
 
