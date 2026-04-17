@@ -33,6 +33,7 @@ import {
   RecommendedSkill,
 } from "@/data/officialSources";
 import { MarketplaceSkillDetailDrawer, type MarketplaceSkillDetail } from "@/components/marketplace/MarketplaceSkillDetailDrawer";
+import { GitHubRepoImportWizard } from "@/components/marketplace/GitHubRepoImportWizard";
 import { isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
@@ -213,6 +214,10 @@ export function MarketplaceView() {
   const removeRegistry = useMarketplaceStore((s) => s.removeRegistry);
   const findDuplicateRegistry = useMarketplaceStore((s) => s.findDuplicateRegistry);
   const marketplaceError = useMarketplaceStore((s) => s.error);
+  const githubImport = useMarketplaceStore((s) => s.githubImport);
+  const previewGitHubRepoImport = useMarketplaceStore((s) => s.previewGitHubRepoImport);
+  const importGitHubRepoSkills = useMarketplaceStore((s) => s.importGitHubRepoSkills);
+  const resetGitHubImport = useMarketplaceStore((s) => s.resetGitHubImport);
 
   const rescan = usePlatformStore((s) => s.rescan);
 
@@ -234,6 +239,8 @@ export function MarketplaceView() {
   const [previewInstallingIds, setPreviewInstallingIds] = useState<Set<string>>(new Set());
   const [detailSkill, setDetailSkill] = useState<MarketplaceSkillDetail | null>(null);
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>({ kind: "idle" });
+  const [isGitHubImportOpen, setIsGitHubImportOpen] = useState(false);
+  const [githubRepoUrl, setGitHubRepoUrl] = useState("");
   const detailTriggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -500,6 +507,26 @@ export function MarketplaceView() {
     }
   }
 
+  async function handleGitHubPreview() {
+    try {
+      await previewGitHubRepoImport(githubRepoUrl);
+    } catch {
+      // store keeps recoverable error state
+    }
+  }
+
+  async function handleGitHubImport(selections: Parameters<typeof importGitHubRepoSkills>[1]) {
+    try {
+      await importGitHubRepoSkills(githubRepoUrl, selections);
+      await Promise.all([rescan(), loadRegistries()]);
+      toast.success(
+        lang === "zh" ? "GitHub 仓库技能已导入中央技能库" : "GitHub repo skills imported to Central"
+      );
+    } catch (err) {
+      toast.error(String(err));
+    }
+  }
+
   // ── Tabs ───────────────────────────────────────────────────────────────
 
   const tabs: { id: TabId; label: string }[] = [
@@ -512,8 +539,16 @@ export function MarketplaceView() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="border-b border-border px-6 py-4">
-        <h1 className="text-xl font-semibold">{t("marketplace.title")}</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">{t("marketplace.desc")}</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-xl font-semibold">{t("marketplace.title")}</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">{t("marketplace.desc")}</p>
+          </div>
+          <Button onClick={() => setIsGitHubImportOpen(true)}>
+            <Download className="size-4" />
+            <span>{t("marketplace.githubImportCta")}</span>
+          </Button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -1067,6 +1102,25 @@ export function MarketplaceView() {
           }}
         />
       )}
+
+      <GitHubRepoImportWizard
+        open={isGitHubImportOpen}
+        onOpenChange={setIsGitHubImportOpen}
+        repoUrl={githubRepoUrl}
+        onRepoUrlChange={setGitHubRepoUrl}
+        preview={githubImport.preview}
+        previewError={githubImport.error}
+        isPreviewLoading={githubImport.isPreviewLoading}
+        isImporting={githubImport.isImporting}
+        importResult={githubImport.importResult}
+        onPreview={handleGitHubPreview}
+        onImport={handleGitHubImport}
+        onReset={() => {
+          resetGitHubImport();
+          setGitHubRepoUrl("");
+        }}
+        launcherLabel={t("marketplace.title")}
+      />
     </div>
   );
 }

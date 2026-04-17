@@ -378,6 +378,37 @@
     "previewOpenSource": "Open source repo",
     "previewOpenSkillMd": "Open SKILL.md",
     "previewModeBrowser": "Browser preview",
-    "previewModeDesktop": "Desktop runtime"
+    "previewModeDesktop": "Desktop runtime",
+    "githubImportCta": "Import GitHub repo",
+    "githubImportSecondaryCta": "Import from GitHub",
+    "githubImportTitle": "GitHub repo import",
+    "githubImportDesc": "Launch the shared GitHub repo import wizard from {{launcher}}.",
+    "githubImportStep": {
+      "input": "Repo URL",
+      "preview": "Preview",
+      "confirm": "Confirm",
+      "result": "Result"
+    },
+    "githubRepoUrl": "GitHub repository URL",
+    "previewImport": "Preview import",
+    "githubImportNoWriteHint": "Preview is read-only and performs no write before you confirm import.",
+    "githubImportFoundSkills": "{{count}} discovered skill(s)",
+    "conflictDetected": "Conflict detected",
+    "readyToImport": "Ready to import",
+    "conflictWithExisting": "Conflicts with existing central skill: {{name}}",
+    "duplicateResolution": {
+      "overwrite": "Overwrite",
+      "skip": "Skip",
+      "rename": "Rename"
+    },
+    "renameSkillIdPlaceholder": "New skill id",
+    "reviewImportSelection": "Review import",
+    "confirmImportTitle": "Confirm import",
+    "confirmImportDesc": "Import {{count}} selected skill(s) into canonical Central storage.",
+    "resolveConflictsBeforeImport": "Resolve all selected conflicts before importing.",
+    "githubImportSuccessTitle": "Import complete",
+    "githubImportSuccessDesc": "{{count}} skill(s) were imported into Central.",
+    "githubImportSkipped": "{{count}} skill(s) were skipped.",
+    "githubImportCentralSuccess": "GitHub repo skills imported into Central"
   }
 }

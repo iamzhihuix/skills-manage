@@ -217,3 +217,57 @@ export interface MarketplaceSkill {
   synced_at: string;
   cache_updated_at?: string | null;
 }
+
+export interface GitHubRepoRef {
+  owner: string;
+  repo: string;
+  branch: string;
+  normalizedUrl: string;
+}
+
+export interface GitHubSkillConflict {
+  existingSkillId: string;
+  existingName: string;
+  existingCanonicalPath?: string | null;
+  proposedSkillId: string;
+  proposedName: string;
+}
+
+export interface GitHubSkillPreview {
+  sourcePath: string;
+  skillId: string;
+  skillName: string;
+  description?: string | null;
+  rootDirectory: string;
+  skillDirectoryName: string;
+  downloadUrl: string;
+  conflict?: GitHubSkillConflict | null;
+}
+
+export interface GitHubRepoPreview {
+  repo: GitHubRepoRef;
+  skills: GitHubSkillPreview[];
+}
+
+export type DuplicateResolution = "overwrite" | "skip" | "rename";
+
+export interface GitHubSkillImportSelection {
+  sourcePath: string;
+  resolution: DuplicateResolution;
+  renamedSkillId?: string | null;
+}
+
+export interface ImportedGitHubSkillSummary {
+  sourcePath: string;
+  originalSkillId: string;
+  importedSkillId: string;
+  skillName: string;
+  targetDirectory: string;
+  resolution: DuplicateResolution;
+}
+
+export interface GitHubRepoImportResult {
+  repo: GitHubRepoRef;
+  importedSkills: ImportedGitHubSkillSummary[];
+  skippedSkills: string[];
+}

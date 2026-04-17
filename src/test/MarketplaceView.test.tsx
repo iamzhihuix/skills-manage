@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import type { MarketplaceSkill, SkillRegistry } from "@/types";
+import type { GitHubRepoPreview, MarketplaceSkill, SkillRegistry } from "@/types";
 
 type StoreState = {
   registries: SkillRegistry[];
@@ -12,6 +12,14 @@ type StoreState = {
   isSyncing: boolean;
   installingIds: Set<string>;
   error: string | null;
+  githubImport: {
+    isPreviewLoading: boolean;
+    isImporting: boolean;
+    preview: GitHubRepoPreview | null;
+    importResult: unknown | null;
+    previewedRepoUrl: string | null;
+    error: string | null;
+  };
 };
 
 const storeState: StoreState = {
@@ -52,6 +60,14 @@ const storeState: StoreState = {
   isSyncing: false,
   installingIds: new Set<string>(),
   error: null as string | null,
+  githubImport: {
+    isPreviewLoading: false,
+    isImporting: false,
+    preview: null,
+    importResult: null,
+    previewedRepoUrl: null,
+    error: null,
+  },
 };
 
 vi.mock("@/components/skill/UnifiedSkillCard", () => ({
@@ -96,6 +112,9 @@ const mockRemoveRegistry = vi.fn();
 const mockFindDuplicateRegistry = vi.fn();
 const mockLoadPreviewSkills = vi.fn();
 const mockRescan = vi.fn();
+const mockPreviewGitHubRepoImport = vi.fn();
+const mockImportGitHubRepoSkills = vi.fn();
+const mockResetGitHubImport = vi.fn();
 const mockLoadCentralSkills = vi.fn();
 const mockInstallCentralSkill = vi.fn();
 
@@ -124,6 +143,10 @@ vi.mock("@/stores/marketplaceStore", () => ({
       removeRegistry: mockRemoveRegistry,
       findDuplicateRegistry: mockFindDuplicateRegistry,
       loadPreviewSkills: mockLoadPreviewSkills,
+      githubImport: storeState.githubImport,
+      previewGitHubRepoImport: mockPreviewGitHubRepoImport,
+      importGitHubRepoSkills: mockImportGitHubRepoSkills,
+      resetGitHubImport: mockResetGitHubImport,
     }),
 }));
 
@@ -169,6 +192,9 @@ describe("MarketplaceView", () => {
     mockFindDuplicateRegistry.mockReset();
     mockLoadPreviewSkills.mockReset();
     mockRescan.mockReset();
+    mockPreviewGitHubRepoImport.mockReset();
+    mockImportGitHubRepoSkills.mockReset();
+    mockResetGitHubImport.mockReset();
     mockLoadCentralSkills.mockReset();
     mockInstallCentralSkill.mockReset();
     mockToastSuccess.mockReset();
@@ -211,6 +237,14 @@ describe("MarketplaceView", () => {
     storeState.isSyncing = false;
     storeState.installingIds = new Set<string>();
     storeState.error = null as string | null;
+    storeState.githubImport = {
+      isPreviewLoading: false,
+      isImporting: false,
+      preview: null,
+      importResult: null,
+      previewedRepoUrl: null,
+      error: null,
+    };
     mockFindDuplicateRegistry.mockImplementation(() => null);
     mockLoadPreviewSkills.mockResolvedValue([
       {
@@ -407,5 +441,54 @@ describe("MarketplaceView", () => {
       expect(mockRescan).toHaveBeenCalled();
     });
     expect(mockToastSuccess).toHaveBeenCalledWith("Installed successfully");
+  });
+
+  it("opens the shared github import wizard and previews before import", async () => {
+    mockPreviewGitHubRepoImport.mockImplementation(async () => {
+      storeState.githubImport = {
+        isPreviewLoading: false,
+        isImporting: false,
+        preview: {
+          repo: {
+            owner: "dorukardahan",
+            repo: "twitterapi-io-skill",
+            branch: "main",
+            normalizedUrl: "https://github.com/dorukardahan/twitterapi-io-skill",
+          },
+          skills: [
+            {
+              sourcePath: "twitterapi-io-skill/SKILL.md",
+              skillId: "twitterapi-io",
+              skillName: "twitterapi-io",
+              description: "Twitter API helper",
+              rootDirectory: ".",
+              skillDirectoryName: "twitterapi-io-skill",
+              downloadUrl: "https://example.com/twitterapi-io",
+              conflict: null,
+            },
+          ],
+        },
+        importResult: null,
+        previewedRepoUrl: "https://github.com/dorukardahan/twitterapi-io-skill",
+        error: null,
+      };
+    });
+
+    renderView();
+
+    fireEvent.click(screen.getByRole("button", { name: "Import GitHub repo" }));
+    fireEvent.change(screen.getByLabelText("GitHub repository URL"), {
+      target: { value: "https://github.com/dorukardahan/twitterapi-io-skill" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview import" }));
+
+    await waitFor(() => {
+      expect(mockPreviewGitHubRepoImport).toHaveBeenCalledWith(
+        "https://github.com/dorukardahan/twitterapi-io-skill"
+      );
+    });
+    expect(await screen.findByText("twitterapi-io")).toBeInTheDocument();
+    expect(screen.getByText(/Preview is read-only and performs no write/i)).toBeInTheDocument();
+    expect(mockImportGitHubRepoSkills).not.toHaveBeenCalled();
   });
 });

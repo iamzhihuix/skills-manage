@@ -22,6 +22,14 @@ describe("marketplaceStore", () => {
       isSyncing: false,
       installingIds: new Set(),
       error: null,
+      githubImport: {
+        isPreviewLoading: false,
+        isImporting: false,
+        preview: null,
+        importResult: null,
+        previewedRepoUrl: null,
+        error: null,
+      },
     });
   });
 
@@ -234,5 +242,92 @@ describe("marketplaceStore", () => {
     ).rejects.toThrow("DUPLICATE_REGISTRY:");
 
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it("stores github repo preview results before import", async () => {
+    const preview = {
+      repo: {
+        owner: "anthropics",
+        repo: "skills",
+        branch: "main",
+        normalizedUrl: "https://github.com/anthropics/skills",
+      },
+      skills: [
+        {
+          sourcePath: "skills/research/SKILL.md",
+          skillId: "research",
+          skillName: "research",
+          description: "Research helper",
+          rootDirectory: "skills",
+          skillDirectoryName: "research",
+          downloadUrl: "https://example.com/research",
+          conflict: null,
+        },
+      ],
+    };
+
+    mockInvoke.mockResolvedValueOnce(preview);
+
+    await expect(
+      useMarketplaceStore
+        .getState()
+        .previewGitHubRepoImport("https://github.com/anthropics/skills")
+    ).resolves.toEqual(preview);
+
+    expect(mockInvoke).toHaveBeenCalledWith("preview_github_repo_import", {
+      repoUrl: "https://github.com/anthropics/skills",
+    });
+    expect(useMarketplaceStore.getState().githubImport.preview).toEqual(preview);
+    expect(useMarketplaceStore.getState().githubImport.previewedRepoUrl).toBe(
+      "https://github.com/anthropics/skills"
+    );
+    expect(useMarketplaceStore.getState().githubImport.isPreviewLoading).toBe(false);
+  });
+
+  it("stores github repo import results", async () => {
+    const result = {
+      repo: {
+        owner: "dorukardahan",
+        repo: "twitterapi-io-skill",
+        branch: "main",
+        normalizedUrl: "https://github.com/dorukardahan/twitterapi-io-skill",
+      },
+      importedSkills: [
+        {
+          sourcePath: "twitterapi-io-skill/SKILL.md",
+          originalSkillId: "twitterapi-io",
+          importedSkillId: "twitterapi-io",
+          skillName: "twitterapi-io",
+          targetDirectory: "/Users/test/.agents/skills/twitterapi-io",
+          resolution: "overwrite",
+        },
+      ],
+      skippedSkills: [],
+    };
+
+    mockInvoke.mockResolvedValueOnce(result);
+
+    await expect(
+      useMarketplaceStore.getState().importGitHubRepoSkills("https://github.com/dorukardahan/twitterapi-io-skill", [
+        {
+          sourcePath: "twitterapi-io-skill/SKILL.md",
+          resolution: "overwrite",
+          renamedSkillId: null,
+        },
+      ])
+    ).resolves.toEqual(result);
+
+    expect(mockInvoke).toHaveBeenCalledWith("import_github_repo_skills", {
+      repoUrl: "https://github.com/dorukardahan/twitterapi-io-skill",
+      selections: [
+        {
+          sourcePath: "twitterapi-io-skill/SKILL.md",
+          resolution: "overwrite",
+          renamedSkillId: null,
+        },
+      ],
+    });
+    expect(useMarketplaceStore.getState().githubImport.importResult).toEqual(result);
+    expect(useMarketplaceStore.getState().githubImport.isImporting).toBe(false);
   });
 });

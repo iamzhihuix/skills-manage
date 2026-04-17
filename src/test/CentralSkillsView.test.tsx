@@ -13,6 +13,10 @@ vi.mock("../stores/platformStore", () => ({
   usePlatformStore: vi.fn(),
 }));
 
+vi.mock("../stores/marketplaceStore", () => ({
+  useMarketplaceStore: vi.fn(),
+}));
+
 vi.mock("../components/skill/SkillDetailDrawer", () => ({
   SkillDetailDrawer: ({
     open,
@@ -42,6 +46,7 @@ vi.mock("../components/skill/SkillDetailDrawer", () => ({
 
 import { useCentralSkillsStore } from "../stores/centralSkillsStore";
 import { usePlatformStore } from "../stores/platformStore";
+import { useMarketplaceStore } from "../stores/marketplaceStore";
 import * as tauriBridge from "@/lib/tauri";
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -103,8 +108,12 @@ const mockLoadCentralSkills = vi.fn();
 const mockInstallSkill = vi.fn();
 const mockTogglePlatformLink = vi.fn();
 const mockRescan = vi.fn();
+const mockPreviewGitHubRepoImport = vi.fn();
+const mockImportGitHubRepoSkills = vi.fn();
+const mockResetGitHubImport = vi.fn();
 const mockUseCentralSkillsStore = vi.mocked(useCentralSkillsStore);
 const mockUsePlatformStore = vi.mocked(usePlatformStore);
+const mockUseMarketplaceStore = vi.mocked(useMarketplaceStore);
 
 function buildCentralStoreState(overrides = {}) {
   return {
@@ -146,6 +155,23 @@ function renderCentralSkillsView() {
     if (typeof selector === "function") return selector(state);
     return state;
   });
+  mockUseMarketplaceStore.mockImplementation((selector?: unknown) => {
+    const state = {
+      githubImport: {
+        isPreviewLoading: false,
+        isImporting: false,
+        preview: null,
+        importResult: null,
+        previewedRepoUrl: null,
+        error: null,
+      },
+      previewGitHubRepoImport: mockPreviewGitHubRepoImport,
+      importGitHubRepoSkills: mockImportGitHubRepoSkills,
+      resetGitHubImport: mockResetGitHubImport,
+    };
+    if (typeof selector === "function") return selector(state);
+    return state;
+  });
 
   return render(
     <MemoryRouter>
@@ -178,6 +204,11 @@ describe("CentralSkillsView", () => {
     expect(
       screen.getByRole("button", { name: /刷新中央技能库/i })
     ).toBeInTheDocument();
+  });
+
+  it("shows the shared github import launcher", () => {
+    renderCentralSkillsView();
+    expect(screen.getByRole("button", { name: /从 GitHub 导入/i })).toBeInTheDocument();
   });
 
   it("shows a search input", () => {

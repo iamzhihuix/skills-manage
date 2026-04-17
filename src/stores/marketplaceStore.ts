@@ -1,6 +1,21 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import { SkillRegistry, MarketplaceSkill } from "@/types";
+import {
+  SkillRegistry,
+  MarketplaceSkill,
+  GitHubRepoPreview,
+  GitHubRepoImportResult,
+  GitHubSkillImportSelection,
+} from "@/types";
+
+interface GitHubImportState {
+  isPreviewLoading: boolean;
+  isImporting: boolean;
+  preview: GitHubRepoPreview | null;
+  importResult: GitHubRepoImportResult | null;
+  previewedRepoUrl: string | null;
+  error: string | null;
+}
 
 interface MarketplaceState {
   registries: SkillRegistry[];
@@ -11,6 +26,7 @@ interface MarketplaceState {
   isSyncing: boolean;
   installingIds: Set<string>;
   error: string | null;
+  githubImport: GitHubImportState;
 
   loadRegistries: () => Promise<void>;
   selectRegistry: (id: string) => void;
@@ -23,7 +39,22 @@ interface MarketplaceState {
   removeRegistry: (registryId: string) => Promise<void>;
   getNormalizedRegistryIdentity: (url: string) => string | null;
   findDuplicateRegistry: (url: string) => SkillRegistry | null;
+  previewGitHubRepoImport: (repoUrl: string) => Promise<GitHubRepoPreview>;
+  importGitHubRepoSkills: (
+    repoUrl: string,
+    selections: GitHubSkillImportSelection[]
+  ) => Promise<GitHubRepoImportResult>;
+  resetGitHubImport: () => void;
 }
+
+const initialGitHubImportState = (): GitHubImportState => ({
+  isPreviewLoading: false,
+  isImporting: false,
+  preview: null,
+  importResult: null,
+  previewedRepoUrl: null,
+  error: null,
+});
 
 export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
   registries: [],
@@ -34,6 +65,7 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
   isSyncing: false,
   installingIds: new Set(),
   error: null,
+  githubImport: initialGitHubImportState(),
 
   getNormalizedRegistryIdentity: (url: string) => {
     const trimmed = url.trim();
@@ -188,5 +220,86 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
       registries: registries ?? [],
       selectedRegistryId: s.selectedRegistryId === registryId ? null : s.selectedRegistryId,
     }));
+  },
+
+  previewGitHubRepoImport: async (repoUrl: string) => {
+    set((state) => ({
+      githubImport: {
+        ...state.githubImport,
+        isPreviewLoading: true,
+        preview: null,
+        importResult: null,
+        previewedRepoUrl: repoUrl,
+        error: null,
+      },
+    }));
+
+    try {
+      const preview = await invoke<GitHubRepoPreview>("preview_github_repo_import", {
+        repoUrl,
+      });
+      set((state) => ({
+        githubImport: {
+          ...state.githubImport,
+          isPreviewLoading: false,
+          preview,
+          importResult: null,
+          previewedRepoUrl: repoUrl,
+          error: null,
+        },
+      }));
+      return preview;
+    } catch (err) {
+      set((state) => ({
+        githubImport: {
+          ...state.githubImport,
+          isPreviewLoading: false,
+          preview: null,
+          importResult: null,
+          previewedRepoUrl: repoUrl,
+          error: String(err),
+        },
+      }));
+      throw err;
+    }
+  },
+
+  importGitHubRepoSkills: async (repoUrl: string, selections: GitHubSkillImportSelection[]) => {
+    set((state) => ({
+      githubImport: {
+        ...state.githubImport,
+        isImporting: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const importResult = await invoke<GitHubRepoImportResult>("import_github_repo_skills", {
+        repoUrl,
+        selections,
+      });
+      set((state) => ({
+        githubImport: {
+          ...state.githubImport,
+          isImporting: false,
+          importResult,
+          error: null,
+        },
+      }));
+      return importResult;
+    } catch (err) {
+      set((state) => ({
+        githubImport: {
+          ...state.githubImport,
+          isImporting: false,
+          error: String(err),
+        },
+      }));
+      throw err;
+    }
+  },
+
+  resetGitHubImport: () => {
+    set({ githubImport: initialGitHubImportState() });
   },
 }));

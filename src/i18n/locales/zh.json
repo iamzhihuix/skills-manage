@@ -378,6 +378,37 @@
     "previewOpenSource": "打开源仓库",
     "previewOpenSkillMd": "打开 SKILL.md",
     "previewModeBrowser": "浏览器预览",
-    "previewModeDesktop": "桌面运行时"
+    "previewModeDesktop": "桌面运行时",
+    "githubImportCta": "导入 GitHub 仓库",
+    "githubImportSecondaryCta": "从 GitHub 导入",
+    "githubImportTitle": "GitHub 仓库导入",
+    "githubImportDesc": "从 {{launcher}} 启动共享的 GitHub 仓库导入向导。",
+    "githubImportStep": {
+      "input": "仓库地址",
+      "preview": "预览",
+      "confirm": "确认",
+      "result": "结果"
+    },
+    "githubRepoUrl": "GitHub 仓库 URL",
+    "previewImport": "预览导入",
+    "githubImportNoWriteHint": "预览为只读操作，在你确认导入前不会执行任何写入。",
+    "githubImportFoundSkills": "发现 {{count}} 个技能",
+    "conflictDetected": "检测到冲突",
+    "readyToImport": "可直接导入",
+    "conflictWithExisting": "与现有中央技能冲突：{{name}}",
+    "duplicateResolution": {
+      "overwrite": "覆盖",
+      "skip": "跳过",
+      "rename": "重命名"
+    },
+    "renameSkillIdPlaceholder": "新的技能 ID",
+    "reviewImportSelection": "检查导入内容",
+    "confirmImportTitle": "确认导入",
+    "confirmImportDesc": "将 {{count}} 个选中的技能导入到规范的中央技能库。",
+    "resolveConflictsBeforeImport": "请先处理所有已选技能的冲突再继续导入。",
+    "githubImportSuccessTitle": "导入完成",
+    "githubImportSuccessDesc": "已将 {{count}} 个技能导入中央技能库。",
+    "githubImportSkipped": "已跳过 {{count}} 个技能。",
+    "githubImportCentralSuccess": "GitHub 仓库技能已导入中央技能库"
   }
 }

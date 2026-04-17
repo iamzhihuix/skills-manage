@@ -12,6 +12,8 @@ import { InstallDialog } from "@/components/central/InstallDialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SkillWithLinks } from "@/types";
+import { GitHubRepoImportWizard } from "@/components/marketplace/GitHubRepoImportWizard";
+import { useMarketplaceStore } from "@/stores/marketplaceStore";
 
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
@@ -79,6 +81,10 @@ export function CentralSkillsView() {
 
   // Keep the platform sidebar counts in sync after install.
   const refreshCounts = usePlatformStore((state) => state.refreshCounts);
+  const githubImport = useMarketplaceStore((state) => state.githubImport);
+  const previewGitHubRepoImport = useMarketplaceStore((state) => state.previewGitHubRepoImport);
+  const importGitHubRepoSkills = useMarketplaceStore((state) => state.importGitHubRepoSkills);
+  const resetGitHubImport = useMarketplaceStore((state) => state.resetGitHubImport);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [installTargetSkill, setInstallTargetSkill] =
@@ -86,6 +92,8 @@ export function CentralSkillsView() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [drawerSkillId, setDrawerSkillId] = useState<string | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isGitHubImportOpen, setIsGitHubImportOpen] = useState(false);
+  const [githubRepoUrl, setGitHubRepoUrl] = useState("");
   const contentRef = useRef<HTMLDivElement | null>(null);
   const detailButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
@@ -153,6 +161,26 @@ export function CentralSkillsView() {
     }
   }
 
+  async function handleGitHubPreview() {
+    try {
+      await previewGitHubRepoImport(githubRepoUrl);
+    } catch {
+      // store keeps error
+    }
+  }
+
+  async function handleGitHubImport(
+    selections: Parameters<typeof importGitHubRepoSkills>[1]
+  ) {
+    try {
+      await importGitHubRepoSkills(githubRepoUrl, selections);
+      await Promise.all([refreshCounts(), loadCentralSkills()]);
+      toast.success(t("marketplace.githubImportCentralSuccess"));
+    } catch (err) {
+      toast.error(t("marketplace.installError", { error: String(err) }));
+    }
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -171,6 +199,9 @@ export function CentralSkillsView() {
           aria-label={t("central.refresh")}
         >
           <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
+        </Button>
+        <Button variant="outline" onClick={() => setIsGitHubImportOpen(true)}>
+          {t("marketplace.githubImportSecondaryCta")}
         </Button>
       </div>
 
@@ -244,6 +275,25 @@ export function CentralSkillsView() {
               }
             : undefined
         }
+      />
+
+      <GitHubRepoImportWizard
+        open={isGitHubImportOpen}
+        onOpenChange={setIsGitHubImportOpen}
+        repoUrl={githubRepoUrl}
+        onRepoUrlChange={setGitHubRepoUrl}
+        preview={githubImport.preview}
+        previewError={githubImport.error}
+        isPreviewLoading={githubImport.isPreviewLoading}
+        isImporting={githubImport.isImporting}
+        importResult={githubImport.importResult}
+        onPreview={handleGitHubPreview}
+        onImport={handleGitHubImport}
+        onReset={() => {
+          resetGitHubImport();
+          setGitHubRepoUrl("");
+        }}
+        launcherLabel={t("central.title")}
       />
     </div>
   );
