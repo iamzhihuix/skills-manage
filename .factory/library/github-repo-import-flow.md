@@ -46,6 +46,7 @@ Do not expand v1 into arbitrary nested repository traversal.
 - Multi-skill preview must support explicit subset selection.
 - Conflict resolution UI must be explicit per selected skill; never silently overwrite.
 - Post-import platform selection should reuse existing install patterns/stores where possible.
+- On browser/Vite surfaces without the Tauri bridge, the wizard must show a friendly desktop-only unsupported state instead of throwing on `invoke()`.
 
 ## Validation Inputs
 
@@ -54,6 +55,8 @@ Do not expand v1 into arbitrary nested repository traversal.
 - **Backup multi-skill repo:** `https://github.com/cloudflare/skills`
 
 Use the provided single-skill repo to validate the root-layout import path. Use `anthropics/skills` to validate subset selection against a top-level `skills/` layout. Fall back to `cloudflare/skills` only if `anthropics/skills` becomes unavailable or incompatible during validation.
+
+Actual preview/import assertions must be exercised on a real Tauri runtime. The plain browser/Vite surface should only be used to confirm the non-Tauri fallback message and launcher parity.
 
 ## Out of Scope for Milestone 8
 

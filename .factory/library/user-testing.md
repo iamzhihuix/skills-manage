@@ -58,6 +58,7 @@
 - Run Milestone 8 validation under an isolated `HOME` and verify that preview leaves the isolated `~/.agents/skills/` empty until the user confirms import.
 - For duplicate-resolution validation, either pre-seed an isolated central skill with a matching imported skill name or repeat an import in the same isolated `HOME` so the second run hits the overwrite / skip / rename path.
 - Validate both entry points: Marketplace as the primary launcher and Central as the secondary launcher for the exact same wizard flow.
+- Execute the actual preview/import/install assertions on a real Tauri dev/native surface; use the plain Vite/browser surface only to verify the non-Tauri fallback message and that the shared launcher UI still opens.
 
 ## Rapid OCR-Based WKWebView Content Verification
 
