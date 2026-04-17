@@ -17,6 +17,7 @@ interface MarketplaceState {
   setSearchQuery: (query: string) => void;
   syncRegistry: (registryId: string, forceRefresh?: boolean) => Promise<void>;
   loadSkills: (registryId: string, query?: string) => Promise<void>;
+  loadPreviewSkills: (registryId: string) => Promise<MarketplaceSkill[]>;
   installSkill: (skillId: string) => Promise<void>;
   addRegistry: (name: string, sourceType: string, url: string) => Promise<SkillRegistry>;
   removeRegistry: (registryId: string) => Promise<void>;
@@ -128,6 +129,13 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
     } catch (err) {
       set({ error: String(err), isLoading: false });
     }
+  },
+
+  loadPreviewSkills: async (registryId: string) => {
+    return invoke<MarketplaceSkill[]>("search_marketplace_skills", {
+      registryId,
+      query: null,
+    });
   },
 
   installSkill: async (skillId: string) => {
