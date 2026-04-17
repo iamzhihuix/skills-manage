@@ -526,6 +526,71 @@ describe("MarketplaceView", () => {
     expect(mockImportGitHubRepoSkills).not.toHaveBeenCalled();
   });
 
+  it("uses an expanded desktop width for the github preview shell while keeping the split layout", async () => {
+    mockPreviewGitHubRepoImport.mockImplementation(async () => {
+      storeState.githubImport = {
+        isPreviewLoading: false,
+        isImporting: false,
+        preview: {
+          repo: {
+            owner: "anthropics",
+            repo: "skills",
+            branch: "main",
+            normalizedUrl: "https://github.com/anthropics/skills",
+          },
+          skills: [
+            {
+              sourcePath: "skills/first/SKILL.md",
+              skillId: "first-skill",
+              skillName: "First Skill",
+              description: "First skill full description",
+              rootDirectory: "skills",
+              skillDirectoryName: "first",
+              downloadUrl: "https://example.com/first",
+              conflict: null,
+            },
+            {
+              sourcePath: "skills/second/SKILL.md",
+              skillId: "second-skill",
+              skillName: "Second Skill",
+              description: "Second skill full description",
+              rootDirectory: "skills",
+              skillDirectoryName: "second",
+              downloadUrl: "https://example.com/second",
+              conflict: null,
+            },
+          ],
+        },
+        importResult: null,
+        previewedRepoUrl: "https://github.com/anthropics/skills",
+        error: null,
+      };
+    });
+
+    renderView();
+
+    fireEvent.click(screen.getByRole("button", { name: "Import GitHub repo" }));
+    fireEvent.change(screen.getByLabelText("GitHub repository URL"), {
+      target: { value: "https://github.com/anthropics/skills" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview import" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const content = dialog.querySelector('[data-slot="dialog-content"]');
+    expect(content?.className).toContain("w-[min(98vw,1520px)]");
+    expect(content?.className).toContain("xl:w-[min(99vw,1680px)]");
+
+    const splitLayout = screen
+      .getByTestId("github-import-summary-list")
+      .closest(".grid");
+    expect(splitLayout?.className).toContain(
+      "lg:grid-cols-[minmax(360px,0.95fr)_minmax(0,1.65fr)]"
+    );
+    expect(splitLayout?.className).toContain(
+      "xl:grid-cols-[minmax(420px,0.9fr)_minmax(0,1.8fr)]"
+    );
+  });
+
   it("shows only the selected github preview skill description in the detail pane", async () => {
     mockPreviewGitHubRepoImport.mockImplementation(async () => {
       storeState.githubImport = {
