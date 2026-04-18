@@ -221,7 +221,7 @@ export function GitHubRepoImportWizard({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="flex h-[min(92vh,860px)] w-[min(98vw,1520px)] max-w-none flex-col overflow-hidden p-0 xl:w-[min(99vw,1680px)]">
+      <DialogContent className="flex h-[min(92vh,860px)] w-[min(98vw,1520px)] max-w-[min(98vw,1520px)] flex-col overflow-hidden p-0 xl:w-[min(99vw,1680px)] xl:max-w-[min(99vw,1680px)]">
         <div className="shrink-0 border-b border-border/70 px-6 pb-4 pt-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">

@@ -591,6 +591,20 @@ describe("MarketplaceView", () => {
     );
   });
 
+  it("uses the wide desktop shell from the initial github import input step", async () => {
+    renderView();
+
+    fireEvent.click(screen.getByRole("button", { name: "Import GitHub repo" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const content = dialog.querySelector('[data-slot="dialog-content"]');
+
+    expect(content?.className).toContain("w-[min(98vw,1520px)]");
+    expect(content?.className).toContain("max-w-[min(98vw,1520px)]");
+    expect(content?.className).toContain("xl:w-[min(99vw,1680px)]");
+    expect(content?.className).toContain("xl:max-w-[min(99vw,1680px)]");
+  });
+
   it("shows only the selected github preview skill description in the detail pane", async () => {
     mockPreviewGitHubRepoImport.mockImplementation(async () => {
       storeState.githubImport = {
