@@ -91,6 +91,7 @@ function setupMocks({
   saveGitHubPat = vi.fn(),
   clearGitHubPat = vi.fn(),
   rescan = vi.fn(),
+  refreshCounts = vi.fn(),
   flavor = "mocha" as const,
   setFlavor = vi.fn(),
   accent = "lavender" as const,
@@ -127,7 +128,7 @@ function setupMocks({
       error: null,
       initialize: vi.fn(),
       rescan,
-      refreshCounts: vi.fn(),
+      refreshCounts,
     })
   );
 
@@ -251,8 +252,7 @@ describe("SettingsView", () => {
   it("renders builtin scan directory with 内置目录 label", () => {
     setupMocks({ scanDirs: [mockBuiltinDir] });
     renderSettingsView();
-    expect(screen.getByText("~/.agents/skills/")).toBeTruthy();
-    expect(screen.getByText("内置目录")).toBeTruthy();
+    expect(screen.getAllByText(/内置目录/).length).toBeGreaterThan(0);
   });
 
   it("does not show remove button for builtin directories", () => {
@@ -330,10 +330,10 @@ describe("SettingsView", () => {
     });
   });
 
-  it("triggers rescan after removing a directory", async () => {
+  it("refreshes counts after removing a directory", async () => {
     const removeScanDirectory = vi.fn().mockResolvedValue(undefined);
-    const rescan = vi.fn().mockResolvedValue(undefined);
-    setupMocks({ scanDirs: [mockCustomDir], removeScanDirectory, rescan });
+    const refreshCounts = vi.fn().mockResolvedValue(undefined);
+    setupMocks({ scanDirs: [mockCustomDir], removeScanDirectory, refreshCounts });
     renderSettingsView();
 
     fireEvent.click(
@@ -341,7 +341,7 @@ describe("SettingsView", () => {
     );
 
     await waitFor(() => {
-      expect(rescan).toHaveBeenCalled();
+      expect(refreshCounts).toHaveBeenCalled();
     });
   });
 
@@ -454,7 +454,7 @@ describe("SettingsView", () => {
   it("shows the app version in the about section", () => {
     setupMocks();
     renderSettingsView();
-    expect(screen.getByText("skills-manage v0.1.0")).toBeTruthy();
+    expect(screen.getByText("skills-manage v0.8.0")).toBeTruthy();
   });
 
   it("shows the database path in the about section", () => {

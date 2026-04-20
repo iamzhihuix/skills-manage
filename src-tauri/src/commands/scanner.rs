@@ -363,7 +363,10 @@ mod tests {
         fs::write(&md_path, "# Just a Markdown file\n\nNo frontmatter here.").unwrap();
 
         let result = parse_skill_md(&md_path);
-        assert!(result.is_none(), "should return None when frontmatter is absent");
+        assert!(
+            result.is_none(),
+            "should return None when frontmatter is absent"
+        );
     }
 
     #[test]
@@ -405,7 +408,10 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         let (kind, target) = detect_link_type(&dir, false);
-        assert_eq!(kind, "copy", "real dir in platform context should be 'copy'");
+        assert_eq!(
+            kind, "copy",
+            "real dir in platform context should be 'copy'"
+        );
         assert!(target.is_none());
     }
 
@@ -416,7 +422,10 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         let (kind, target) = detect_link_type(&dir, true);
-        assert_eq!(kind, "native", "real dir in central context should be 'native'");
+        assert_eq!(
+            kind, "native",
+            "real dir in central context should be 'native'"
+        );
         assert!(target.is_none());
     }
 
@@ -558,7 +567,11 @@ mod tests {
     #[test]
     fn test_scan_directory_central_dir_marks_native() {
         let tmp = TempDir::new().unwrap();
-        create_skill_dir(tmp.path(), "central-skill", &valid_skill_md("Central", "desc"));
+        create_skill_dir(
+            tmp.path(),
+            "central-skill",
+            &valid_skill_md("Central", "desc"),
+        );
 
         let skills = scan_directory(tmp.path(), true /* is_central */);
         assert_eq!(skills.len(), 1);
@@ -574,7 +587,11 @@ mod tests {
 
         // Create a real skill in another location (central-like)
         let central_dir = tmp.path().join("central");
-        create_skill_dir(&central_dir, "my-skill", &valid_skill_md("My Skill", "desc"));
+        create_skill_dir(
+            &central_dir,
+            "my-skill",
+            &valid_skill_md("My Skill", "desc"),
+        );
 
         // Symlink it into the agent skills dir
         let link = skills_dir.join("my-skill");
@@ -597,9 +614,7 @@ mod tests {
     async fn setup_test_db() -> DbPool {
         use crate::db;
         use sqlx::SqlitePool;
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .expect("in-memory DB");
+        let pool = SqlitePool::connect(":memory:").await.expect("in-memory DB");
         db::init_database(&pool).await.expect("init");
         pool
     }
@@ -610,9 +625,7 @@ mod tests {
 
         // Build a pool with tables but no seeded agents so the test is
         // isolated from whatever the user has installed on their machine.
-        let pool = SqlitePool::connect(":memory:")
-            .await
-            .expect("in-memory DB");
+        let pool = SqlitePool::connect(":memory:").await.expect("in-memory DB");
         db::init_database(&pool).await.expect("init");
         // Remove all seeded agents so the test is isolated from whatever the
         // user has installed on their machine.
@@ -714,7 +727,9 @@ mod tests {
             is_builtin: false,
             is_enabled: true,
         };
-        db::insert_custom_agent(&pool, &central_agent).await.unwrap();
+        db::insert_custom_agent(&pool, &central_agent)
+            .await
+            .unwrap();
 
         create_skill_dir(
             tmp.path(),
@@ -753,7 +768,9 @@ mod tests {
         assert!(result.total_skills > 0);
 
         // Skill should be in the DB
-        let skill = db::get_skill_by_id(&pool, "custom-dir-skill").await.unwrap();
+        let skill = db::get_skill_by_id(&pool, "custom-dir-skill")
+            .await
+            .unwrap();
         assert!(skill.is_some());
     }
 
@@ -790,21 +807,13 @@ mod tests {
         db::insert_custom_agent(&pool, &agent_a).await.unwrap();
         db::insert_custom_agent(&pool, &agent_b).await.unwrap();
 
-        create_skill_dir(
-            tmp_a.path(),
-            "skill-x",
-            &valid_skill_md("Skill X", "In A"),
-        );
+        create_skill_dir(tmp_a.path(), "skill-x", &valid_skill_md("Skill X", "In A"));
         create_skill_dir(
             tmp_a.path(),
             "skill-y",
             &valid_skill_md("Skill Y", "In A too"),
         );
-        create_skill_dir(
-            tmp_b.path(),
-            "skill-z",
-            &valid_skill_md("Skill Z", "In B"),
-        );
+        create_skill_dir(tmp_b.path(), "skill-z", &valid_skill_md("Skill Z", "In B"));
 
         let result = scan_all_skills_impl(&pool).await.unwrap();
 
@@ -844,7 +853,11 @@ mod tests {
         let installations = db::get_skill_installations(&pool, "my-skill")
             .await
             .unwrap();
-        assert_eq!(installations.len(), 1, "Expected exactly one installation record");
+        assert_eq!(
+            installations.len(),
+            1,
+            "Expected exactly one installation record"
+        );
 
         let inst = &installations[0];
         // installed_path must NOT be the SKILL.md file path.
@@ -899,10 +912,12 @@ mod tests {
 
         // First scan — both skills should be persisted.
         scan_all_skills_impl(&pool).await.unwrap();
-        let skills_first = db::get_skills_by_agent(&pool, "stale-agent")
-            .await
-            .unwrap();
-        assert_eq!(skills_first.len(), 2, "Both skills should be in DB after first scan");
+        let skills_first = db::get_skills_by_agent(&pool, "stale-agent").await.unwrap();
+        assert_eq!(
+            skills_first.len(),
+            2,
+            "Both skills should be in DB after first scan"
+        );
 
         // Remove "skill-remove" from disk.
         fs::remove_dir_all(tmp.path().join("skill-remove")).unwrap();
@@ -910,9 +925,7 @@ mod tests {
         // Second scan — "skill-remove" must disappear from the DB.
         scan_all_skills_impl(&pool).await.unwrap();
 
-        let skills_after = db::get_skills_by_agent(&pool, "stale-agent")
-            .await
-            .unwrap();
+        let skills_after = db::get_skills_by_agent(&pool, "stale-agent").await.unwrap();
         assert_eq!(
             skills_after.len(),
             1,
@@ -985,7 +998,9 @@ mod tests {
             is_builtin: false,
             is_enabled: true,
         };
-        db::insert_custom_agent(&pool, &central_agent).await.unwrap();
+        db::insert_custom_agent(&pool, &central_agent)
+            .await
+            .unwrap();
         db::insert_custom_agent(&pool, &coding_agent).await.unwrap();
 
         // Place one skill in the shared directory.

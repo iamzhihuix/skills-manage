@@ -57,54 +57,64 @@ export function TopBar({ onSearchClick }: TopBarProps) {
     navigator.platform.toUpperCase().includes("MAC");
 
   return (
-    <header className="flex items-center h-12 px-4 border-b border-border bg-sidebar text-sidebar-foreground shrink-0 gap-3">
+    <header className="relative flex items-center h-12 px-4 border-b border-border bg-sidebar text-sidebar-foreground shrink-0">
       {/* App icon */}
       <button
         onClick={() => navigate("/central")}
-        className="p-1.5 rounded-md transition-colors cursor-pointer text-sidebar-primary hover:bg-muted/60 shrink-0"
+        className="z-10 p-1.5 rounded-md transition-colors cursor-pointer text-sidebar-primary hover:bg-muted/60 shrink-0"
         aria-label={t("app.name")}
         title={t("app.name")}
       >
         <Blocks className="size-4" />
       </button>
 
-      {/* Search trigger — left-center position */}
-      <button
-        onClick={onSearchClick}
-        className={cn(
-          "flex items-center gap-2 w-full max-w-sm h-8 px-3 rounded-md text-sm",
-          "bg-muted/40 text-muted-foreground border border-border/50",
-          "hover:bg-muted/60 hover:border-border transition-colors cursor-pointer"
-        )}
-      >
-        <Search className="size-3.5 shrink-0" />
-        <span className="truncate flex-1 text-left">
-          {t("globalSearch.trigger")}
-        </span>
-        <kbd className="hidden sm:inline-flex items-center gap-0.5 text-[10px] font-mono text-muted-foreground/60 border border-border/50 rounded px-1 py-0.5">
-          {isMac ? "⌘" : "Ctrl"}K
-        </kbd>
-      </button>
-
-      {/* Breadcrumb / view label */}
-      {viewInfo.label && (
-        <div className="flex items-center gap-1.5 min-w-0 shrink-0 text-muted-foreground">
-          <span className="text-muted-foreground/40">/</span>
-          <span className="text-sm truncate">{viewInfo.label}</span>
-          {viewInfo.count !== undefined && viewInfo.count > 0 && (
-            <span className="text-xs text-muted-foreground/60">
-              ({viewInfo.count})
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Spacer */}
       <div className="flex-1" />
+
+      <div className="pointer-events-none absolute inset-0 hidden items-center justify-center px-16 lg:flex">
+        <div className="pointer-events-auto flex items-center gap-3 max-w-[min(56rem,calc(100vw-14rem))]">
+          <button
+            onClick={onSearchClick}
+            className={cn(
+              "flex items-center gap-2 h-8 w-[min(26rem,40vw)] min-w-[14rem] px-3 rounded-md text-sm",
+              "bg-muted/40 text-muted-foreground border border-border/50",
+              "hover:bg-muted/60 hover:border-border transition-colors cursor-pointer",
+            )}
+          >
+            <Search className="size-3.5 shrink-0" />
+            <span className="truncate flex-1 text-left">
+              {t("globalSearch.trigger")}
+            </span>
+            <kbd className="hidden sm:inline-flex items-center gap-0.5 text-[10px] font-mono text-muted-foreground/60 border border-border/50 rounded px-1 py-0.5">
+              {isMac ? "⌘" : "Ctrl"}K
+            </kbd>
+          </button>
+        </div>
+      </div>
+
+      <div className="ml-3 flex min-w-0 flex-1 items-center gap-2 lg:hidden">
+        <button
+          onClick={onSearchClick}
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 h-8 px-3 rounded-md text-sm",
+            "bg-muted/40 text-muted-foreground border border-border/50",
+            "hover:bg-muted/60 hover:border-border transition-colors cursor-pointer",
+          )}
+        >
+          <Search className="size-3.5 shrink-0" />
+          <span className="truncate flex-1 text-left">
+            {t("globalSearch.trigger")}
+          </span>
+        </button>
+        {viewInfo.label && (
+          <span className="truncate text-sm text-muted-foreground">
+            {viewInfo.label}
+          </span>
+        )}
+      </div>
 
       {/* Scan indicator */}
       {isScanning && (
-        <div className="flex items-center gap-1.5 text-xs text-primary shrink-0">
+        <div className="mr-2 flex items-center gap-1.5 text-xs text-primary shrink-0">
           <span className="relative flex size-2">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
             <span className="relative inline-flex rounded-full size-2 bg-primary" />
@@ -117,9 +127,9 @@ export function TopBar({ onSearchClick }: TopBarProps) {
       <button
         onClick={() => navigate("/settings")}
         className={cn(
-          "p-1.5 rounded-md transition-colors cursor-pointer shrink-0",
+          "z-10 p-1.5 rounded-md transition-colors cursor-pointer shrink-0",
           "text-muted-foreground hover:text-foreground hover:bg-muted/60",
-          pathname === "/settings" && "bg-muted/60 text-foreground"
+          pathname === "/settings" && "bg-muted/60 text-foreground",
         )}
         aria-label={t("sidebar.settings")}
         title={t("sidebar.settings")}

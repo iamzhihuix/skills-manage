@@ -376,15 +376,23 @@ export function UnifiedSkillCard(props: UnifiedSkillCardProps) {
 function SourceIndicator({ sourceType }: { sourceType: string }) {
   const { t } = useTranslation();
   const isSymlink = sourceType === "symlink";
+  const primaryLabel = isSymlink ? t("platform.sourceCentral") : t("platform.sourceStandalone");
+  const secondaryLabel = isSymlink ? t("platform.sourceSymlinkLabel") : t("platform.sourceCopyLabel");
+
   return (
     <div
       className={cn(
-        "flex items-center gap-1 text-xs font-medium",
+        "inline-flex items-center gap-1 text-xs font-medium",
         isSymlink ? "text-primary/80" : "text-muted-foreground"
       )}
     >
       {isSymlink ? <Link2 className="size-3 shrink-0" /> : <FolderOpen className="size-3 shrink-0" />}
-      <span>{isSymlink ? t("platform.sourceSymlink") : t("platform.sourceCopy")}</span>
+      <div className="inline-flex items-center gap-1">
+        <span>{primaryLabel}</span>
+        <span aria-hidden="true" className="h-px w-3 shrink-0 rounded-full bg-current opacity-40" />
+        <span className="sr-only"> - </span>
+        <span>{secondaryLabel}</span>
+      </div>
     </div>
   );
 }

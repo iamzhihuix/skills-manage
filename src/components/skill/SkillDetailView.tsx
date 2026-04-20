@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type Ref, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
@@ -13,15 +13,19 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  Monitor,
+  FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlatformIcon } from "@/components/platform/PlatformIcon";
+import { SkillFrontmatterCard } from "@/components/skill/SkillFrontmatterCard";
+import { parseFrontmatter } from "@/lib/frontmatter";
 import { useSkillDetailStore } from "@/stores/skillDetailStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { CollectionPickerDialog } from "@/components/collection/CollectionPickerDialog";
 import { AgentWithStatus, SkillInstallation } from "@/types";
 import { cn } from "@/lib/utils";
-import { isTauriRuntime } from "@/lib/tauri";
+import { invoke, isTauriRuntime } from "@/lib/tauri";
 
 // ─── Section Label ─────────────────────────────────────────────────────────────
 
@@ -136,11 +140,6 @@ function TabToggle({ activeTab, onChange }: TabToggleProps) {
   );
 }
 
-function stripFrontmatter(markdown: string) {
-  const match = markdown.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
-  return match ? match[1].trimStart() : markdown;
-}
-
 const detailTypographyClassName = cn(
   "text-[13px] leading-6 text-foreground/90",
   "[&_p]:text-[13px] [&_p]:leading-6",
@@ -171,9 +170,23 @@ const detailTypographyClassName = cn(
  * to the outer shell. It also does NOT call `useNavigate` / `useParams`; all
  * route/shell concerns are handled outside.
  */
+export interface DiscoverMetadata {
+  name: string;
+  description?: string;
+  platformName: string;
+  projectName: string;
+  filePath: string;
+  dirPath: string;
+  isAlreadyCentral: boolean;
+}
+
 export interface SkillDetailViewProps {
-  /** The skill id to load. */
-  skillId: string;
+  /** The skill id to load from DB. Required for central skills. */
+  skillId?: string;
+  /** Direct file path to load content from. Used for discover non-central skills. */
+  filePath?: string;
+  /** Metadata for discover non-central skills (shown in sidebar). */
+  discoverMetadata?: DiscoverMetadata;
   /** Affects local styling only, never behavior. */
   variant: "page" | "drawer";
   /** ViewHeader leftmost slot; currently null from both shells. */
@@ -188,6 +201,8 @@ export interface SkillDetailViewProps {
 
 export function SkillDetailView({
   skillId,
+  filePath,
+  discoverMetadata,
   variant,
   leading = null,
   onRequestClose: _onRequestClose,
@@ -195,19 +210,20 @@ export function SkillDetailView({
   titleId,
 }: SkillDetailViewProps) {
   const { t, i18n } = useTranslation();
+  const isFileMode = !skillId && !!filePath;
 
-  // Store data
+  // Store data (used in skillId mode)
   const detail = useSkillDetailStore((s) => s.detail);
-  const content = useSkillDetailStore((s) => s.content);
-  const isLoading = useSkillDetailStore((s) => s.isLoading);
+  const storeContent = useSkillDetailStore((s) => s.content);
+  const storeIsLoading = useSkillDetailStore((s) => s.isLoading);
   const installingAgentId = useSkillDetailStore((s) => s.installingAgentId);
   const error = useSkillDetailStore((s) => s.error);
   const loadDetail = useSkillDetailStore((s) => s.loadDetail);
   const installSkill = useSkillDetailStore((s) => s.installSkill);
   const uninstallSkill = useSkillDetailStore((s) => s.uninstallSkill);
   const refreshInstallations = useSkillDetailStore((s) => s.refreshInstallations);
-  const explanation = useSkillDetailStore((s) => s.explanation);
-  const isExplanationLoading = useSkillDetailStore((s) => s.isExplanationLoading);
+  const storeExplanation = useSkillDetailStore((s) => s.explanation);
+  const storeIsExplanationLoading = useSkillDetailStore((s) => s.isExplanationLoading);
   const isExplanationStreaming = useSkillDetailStore((s) => s.isExplanationStreaming);
   const explanationError = useSkillDetailStore((s) => s.explanationError);
   const explanationErrorInfo = useSkillDetailStore((s) => s.explanationErrorInfo);
@@ -220,15 +236,48 @@ export function SkillDetailView({
   const agents = usePlatformStore((s) => s.agents);
   const refreshCounts = usePlatformStore((s) => s.refreshCounts);
 
+  // Local state for filePath mode
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [fileIsLoading, setFileIsLoading] = useState(false);
+  const [fileExplanation, setFileExplanation] = useState<string | null>(null);
+  const [fileIsExplaining, setFileIsExplaining] = useState(false);
+
+  // Unified accessors
+  const content = isFileMode ? fileContent : storeContent;
+  const isLoading = isFileMode ? fileIsLoading : storeIsLoading;
+  const explanation = isFileMode ? fileExplanation : storeExplanation;
+  const isExplanationLoading = isFileMode ? fileIsExplaining : storeIsExplanationLoading;
+
   // Local UI state
   const [activeTab, setActiveTab] = useState<PreviewTab>("markdown");
   const [isCollectionPickerOpen, setIsCollectionPickerOpen] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const addToCollectionButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  // Load detail on mount / skillId change, reset on unmount.
-  // `reset()` must be safe to call regardless of shell and aborts any
-  // in-flight AI explanation request via its monotonic request-id logic.
+  // ── File mode: load content from path ─────────────────────────────────
+  const fetchFileContent = useCallback(async () => {
+    if (!filePath) return;
+    setFileIsLoading(true);
+    try {
+      const text = await invoke<string>("read_file_by_path", { path: filePath });
+      setFileContent(text);
+    } catch {
+      setFileContent(null);
+    } finally {
+      setFileIsLoading(false);
+    }
+  }, [filePath]);
+
+  useEffect(() => {
+    if (isFileMode) {
+      setFileContent(null);
+      setFileExplanation(null);
+      setActiveTab("markdown");
+      void fetchFileContent();
+    }
+  }, [isFileMode, fetchFileContent]);
+
+  // ── Store mode: load detail by skillId ────────────────────────────────
   useEffect(() => {
     if (skillId) {
       loadDetail(skillId);
@@ -239,10 +288,10 @@ export function SkillDetailView({
   }, [skillId, loadDetail, reset]);
 
   useEffect(() => {
-    if (skillId && content) {
+    if (skillId && storeContent) {
       loadCachedExplanation(skillId, i18n.language);
     }
-  }, [skillId, content, i18n.language, loadCachedExplanation]);
+  }, [skillId, storeContent, i18n.language, loadCachedExplanation]);
 
   // ── Derived values ───────────────────────────────────────────────────────
 
@@ -253,6 +302,7 @@ export function SkillDetailView({
   const installationMap = new Map<string, SkillInstallation>(
     (detail?.installations ?? []).map((inst) => [inst.agent_id, inst])
   );
+  const skillCollections = detail?.collections ?? [];
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -294,19 +344,50 @@ export function SkillDetailView({
   }
 
   function handleGenerateExplanation() {
+    if (isFileMode && content) {
+      setFileIsExplaining(true);
+      setFileExplanation(null);
+      invoke<string>("explain_skill", { content })
+        .then(setFileExplanation)
+        .catch((err) => setFileExplanation(`Error: ${String(err)}`))
+        .finally(() => setFileIsExplaining(false));
+      return;
+    }
     if (skillId && content) {
       generateExplanation(skillId, content, i18n.language);
     }
   }
 
   function handleRefreshExplanation() {
+    if (isFileMode && content) {
+      handleGenerateExplanation();
+      return;
+    }
     if (skillId && content) {
       refreshExplanation(skillId, content, i18n.language);
     }
   }
 
-  const markdownContent = content ? stripFrontmatter(content) : "";
-  const isBrowserFallback = !isTauriRuntime() && !isLoading && !detail && !error;
+  const handleOpenDiscoverPath = useCallback(async () => {
+    if (!discoverMetadata) return;
+    try {
+      await invoke("open_in_file_manager", { path: discoverMetadata.dirPath });
+    } catch {
+      // silently ignore
+    }
+  }, [discoverMetadata]);
+
+  const { frontmatterRaw, frontmatterData, body: markdownContent } = content
+    ? parseFrontmatter(content)
+    : { frontmatterRaw: "", frontmatterData: {}, body: "" };
+  const isBrowserFallback = !isTauriRuntime() && !isLoading && !detail && !error && !isFileMode;
+  const effectiveName = isFileMode
+    ? (discoverMetadata?.name ?? "")
+    : (detail?.name ?? skillId ?? "");
+  const effectiveDescription = isFileMode
+    ? discoverMetadata?.description
+    : detail?.description;
+  const hasData = isFileMode ? content !== null : !!detail;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -317,11 +398,11 @@ export function SkillDetailView({
         {leading}
         <div className="min-w-0 flex-1">
           <h1 id={titleId} className="text-lg font-semibold truncate">
-            {isLoading ? (skillId ?? "") : (detail?.name ?? skillId ?? "")}
+            {isLoading ? (skillId ?? discoverMetadata?.name ?? "") : effectiveName}
           </h1>
-          {detail?.description && (
+          {effectiveDescription && (
             <p className="text-xs text-muted-foreground truncate mt-0.5">
-              {detail.description}
+              {effectiveDescription}
             </p>
           )}
         </div>
@@ -369,7 +450,7 @@ export function SkillDetailView({
         )}
 
         {/* ── TwoColumnLayout: LeftPreview + RightSidebar ────────────────── */}
-        {!isLoading && !error && detail && (
+        {!isLoading && !error && hasData && (
           <div
             className="flex h-full flex-col md:flex-row"
             data-testid="skill-detail-two-column-layout"
@@ -381,14 +462,17 @@ export function SkillDetailView({
             >
               {activeTab === "markdown" ? (
                 <div
-                  className={cn("markdown-body p-6", detailTypographyClassName)}
+                  className="p-6 space-y-4"
                   role="tabpanel"
                   aria-label={t("detail.markdown")}
                 >
+                  <SkillFrontmatterCard data={frontmatterData} raw={frontmatterRaw} />
                   {content ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {markdownContent}
-                    </ReactMarkdown>
+                    <div className={cn("markdown-body", detailTypographyClassName)}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {markdownContent}
+                      </ReactMarkdown>
+                    </div>
                   ) : (
                     <p className="text-sm text-muted-foreground italic">
                       {t("detail.noContent")}
@@ -512,103 +596,147 @@ export function SkillDetailView({
               data-testid="skill-detail-right-sidebar"
               className="w-full shrink-0 border-t border-border overflow-y-auto p-4 space-y-5 md:w-64 md:border-t-0 md:border-l"
             >
-              {/* Metadata */}
-              <section aria-label={t("detail.metadataRegion")}>
-                <SectionLabel>{t("detail.metadata")}</SectionLabel>
-                <div className="space-y-2.5">
-                  <MetadataRow label={t("detail.filePath")} value={detail.file_path} />
-                  {detail.canonical_path && (
-                    <MetadataRow label={t("detail.canonical")} value={detail.canonical_path} />
-                  )}
-                  {detail.source && (
-                    <MetadataRow label={t("detail.source")} value={detail.source} />
-                  )}
-                  <MetadataRow
-                    label={t("detail.scannedAt")}
-                    value={new Date(detail.scanned_at).toLocaleString()}
-                  />
-                </div>
-              </section>
-
-              {/* Install Status — compact icon grid */}
-              <section aria-label={t("detail.installStatusRegion")}>
-                <SectionLabel>{t("detail.installStatus")}</SectionLabel>
-                <div className="space-y-1.5">
-                  {targetAgents.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">
-                      {t("detail.noPlatforms")}
-                    </p>
-                  ) : (
-                    <>
-                      {lobsterAgents.length > 0 && (
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider w-12 shrink-0">
-                            {t("sidebar.categoryLobster")}
-                          </span>
-                          <div className="flex items-center gap-0.5 flex-wrap">
-                            {lobsterAgents.map((agent) => (
-                              <PlatformToggleIcon
-                                key={agent.id}
-                                agent={agent}
-                                skillName={detail.name}
-                                isInstalled={installationMap.has(agent.id)}
-                                isLoading={installingAgentId === agent.id}
-                                onToggle={() => handleToggle(agent.id)}
-                              />
-                            ))}
-                          </div>
+              {isFileMode && discoverMetadata ? (
+                <>
+                  {/* Discover metadata */}
+                  <section aria-label={t("detail.metadataRegion")}>
+                    <SectionLabel>{t("detail.metadata")}</SectionLabel>
+                    <div className="space-y-2.5">
+                      <div className="space-y-0.5">
+                        <div className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+                          {t("discover.platform")}
                         </div>
-                      )}
-                      {codingAgents.length > 0 && (
-                        <div className="flex items-center gap-1">
-                          <span className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider w-12 shrink-0">
-                            {t("sidebar.categoryCoding")}
-                          </span>
-                          <div className="flex items-center gap-0.5 flex-wrap">
-                            {codingAgents.map((agent) => (
-                              <PlatformToggleIcon
-                                key={agent.id}
-                                agent={agent}
-                                skillName={detail.name}
-                                isInstalled={installationMap.has(agent.id)}
-                                isLoading={installingAgentId === agent.id}
-                                onToggle={() => handleToggle(agent.id)}
-                              />
-                            ))}
-                          </div>
+                        <div className="font-mono text-xs text-foreground break-all leading-relaxed inline-flex items-center gap-1">
+                          <Monitor className="size-3.5" />
+                          <span>{discoverMetadata.platformName}</span>
                         </div>
+                      </div>
+                      <div className="space-y-0.5">
+                        <div className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+                          {t("discover.project")}
+                        </div>
+                        <div className="font-mono text-xs text-foreground break-all leading-relaxed inline-flex items-center gap-1">
+                          <FolderOpen className="size-3.5" />
+                          <span>{discoverMetadata.projectName}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-0.5">
+                        <div className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">
+                          {t("discover.filePath")}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleOpenDiscoverPath}
+                          className="font-mono text-xs text-foreground break-all leading-relaxed hover:text-primary hover:underline cursor-pointer text-left"
+                        >
+                          {discoverMetadata.filePath}
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+                </>
+              ) : detail ? (
+                <>
+                  {/* Metadata */}
+                  <section aria-label={t("detail.metadataRegion")}>
+                    <SectionLabel>{t("detail.metadata")}</SectionLabel>
+                    <div className="space-y-2.5">
+                      <MetadataRow label={t("detail.filePath")} value={detail.file_path} />
+                      {detail.canonical_path && (
+                        <MetadataRow label={t("detail.canonical")} value={detail.canonical_path} />
                       )}
-                    </>
-                  )}
-                </div>
-              </section>
+                      {detail.source && (
+                        <MetadataRow label={t("detail.source")} value={detail.source} />
+                      )}
+                      <MetadataRow
+                        label={t("detail.scannedAt")}
+                        value={new Date(detail.scanned_at).toLocaleString()}
+                      />
+                    </div>
+                  </section>
 
-              {/* Collections */}
-              <section aria-label={t("detail.collections")}>
-                <SectionLabel>{t("detail.collections")}</SectionLabel>
-                <div className="flex flex-wrap gap-1.5 items-center">
-                  {(detail.collections ?? []).map((collectionId) => (
-                    <span
-                      key={collectionId}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/10 text-primary ring-1 ring-primary/20"
-                    >
-                      <Tag className="size-2.5" />
-                      {collectionId}
-                    </span>
-                  ))}
-                  <Button
-                    ref={addToCollectionButtonRef}
-                    variant="ghost"
-                    size="sm"
-                    className="gap-1 text-muted-foreground hover:text-foreground h-6 px-2 text-xs"
-                    aria-label={t("detail.addToCollection")}
-                    onClick={() => setIsCollectionPickerOpen(true)}
-                  >
-                    <Plus className="size-3" />
-                    {t("detail.addToCollection")}
-                  </Button>
-                </div>
-              </section>
+                  {/* Install Status — compact icon grid */}
+                  <section aria-label={t("detail.installStatusRegion")}>
+                    <SectionLabel>{t("detail.installStatus")}</SectionLabel>
+                    <div className="space-y-1.5">
+                      {targetAgents.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t("detail.noPlatforms")}
+                        </p>
+                      ) : (
+                        <>
+                          {lobsterAgents.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider w-12 shrink-0">
+                                {t("sidebar.categoryLobster")}
+                              </span>
+                              <div className="flex items-center gap-0.5 flex-wrap">
+                                {lobsterAgents.map((agent) => (
+                                  <PlatformToggleIcon
+                                    key={agent.id}
+                                    agent={agent}
+                                    skillName={detail.name}
+                                    isInstalled={installationMap.has(agent.id)}
+                                    isLoading={installingAgentId === agent.id}
+                                    onToggle={() => handleToggle(agent.id)}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {codingAgents.length > 0 && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider w-12 shrink-0">
+                                {t("sidebar.categoryCoding")}
+                              </span>
+                              <div className="flex items-center gap-0.5 flex-wrap">
+                                {codingAgents.map((agent) => (
+                                  <PlatformToggleIcon
+                                    key={agent.id}
+                                    agent={agent}
+                                    skillName={detail.name}
+                                    isInstalled={installationMap.has(agent.id)}
+                                    isLoading={installingAgentId === agent.id}
+                                    onToggle={() => handleToggle(agent.id)}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </section>
+
+                  {/* Collections */}
+                  <section aria-label={t("detail.collections")}>
+                    <SectionLabel>{t("detail.collections")}</SectionLabel>
+                    <div className="flex flex-wrap gap-1.5 items-center">
+                      {skillCollections.map((collection) => (
+                        <span
+                          key={collection.id}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-primary/10 text-primary ring-1 ring-primary/20"
+                          title={collection.description ?? collection.name}
+                        >
+                          <Tag className="size-2.5" />
+                          {collection.name}
+                        </span>
+                      ))}
+                      <Button
+                        ref={addToCollectionButtonRef}
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1 text-muted-foreground hover:text-foreground h-6 px-2 text-xs"
+                        aria-label={t("detail.addToCollection")}
+                        onClick={() => setIsCollectionPickerOpen(true)}
+                      >
+                        <Plus className="size-3" />
+                        {t("detail.addToCollection")}
+                      </Button>
+                    </div>
+                  </section>
+                </>
+              ) : null}
             </aside>
           </div>
         )}
@@ -620,7 +748,7 @@ export function SkillDetailView({
           open={isCollectionPickerOpen}
           onOpenChange={handleCollectionPickerOpenChange}
           skillId={skillId}
-          currentCollectionIds={detail?.collections ?? []}
+          currentCollectionIds={skillCollections.map((collection) => collection.id)}
           onAdded={handleCollectionAdded}
         />
       )}

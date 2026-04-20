@@ -328,13 +328,11 @@ mod tests {
         let pool = setup_test_db().await;
 
         // Point claude-code at a path whose parent also doesn't exist.
-        sqlx::query(
-            "UPDATE agents SET global_skills_dir = ? WHERE id = 'claude-code'",
-        )
-        .bind("/nonexistent/deep/path/skills")
-        .execute(&pool)
-        .await
-        .unwrap();
+        sqlx::query("UPDATE agents SET global_skills_dir = ? WHERE id = 'claude-code'")
+            .bind("/nonexistent/deep/path/skills")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let agents = get_agents_impl(&pool).await.unwrap();
         let claude = agents.iter().find(|a| a.id == "claude-code").unwrap();
@@ -359,13 +357,22 @@ mod tests {
             .unwrap();
 
         // Initially not detected in DB.
-        let before = db::get_agent_by_id(&pool, "claude-code").await.unwrap().unwrap();
+        let before = db::get_agent_by_id(&pool, "claude-code")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(!before.is_detected);
 
         detect_agents_impl(&pool).await.unwrap();
 
-        let after = db::get_agent_by_id(&pool, "claude-code").await.unwrap().unwrap();
-        assert!(after.is_detected, "DB should reflect detected status after detect_agents");
+        let after = db::get_agent_by_id(&pool, "claude-code")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            after.is_detected,
+            "DB should reflect detected status after detect_agents"
+        );
     }
 
     #[tokio::test]
@@ -410,7 +417,10 @@ mod tests {
         };
 
         let agent = add_custom_agent_impl(&pool, config).await.unwrap();
-        assert!(!agent.id.is_empty(), "auto-generated ID should not be empty");
+        assert!(
+            !agent.id.is_empty(),
+            "auto-generated ID should not be empty"
+        );
         assert!(
             agent.id.starts_with("custom-"),
             "auto-generated ID should start with 'custom-'"
@@ -473,7 +483,10 @@ mod tests {
         };
 
         let agent = add_custom_agent_impl(&pool, config).await.unwrap();
-        assert_eq!(agent.category, "other", "default category should be 'other'");
+        assert_eq!(
+            agent.category, "other",
+            "default category should be 'other'"
+        );
     }
 
     // ── update_custom_agent_impl ──────────────────────────────────────────────
@@ -499,7 +512,9 @@ mod tests {
             global_skills_dir: "/tmp/updated/skills".to_string(),
         };
 
-        let updated = update_custom_agent_impl(&pool, "update-me", config).await.unwrap();
+        let updated = update_custom_agent_impl(&pool, "update-me", config)
+            .await
+            .unwrap();
         assert_eq!(updated.display_name, "Updated Name");
         assert_eq!(updated.category, "coding");
         assert_eq!(updated.global_skills_dir, "/tmp/updated/skills");
@@ -517,8 +532,13 @@ mod tests {
             global_skills_dir: "/tmp/cat-default/skills".to_string(),
         };
 
-        let updated = update_custom_agent_impl(&pool, "cat-default", config).await.unwrap();
-        assert_eq!(updated.category, "other", "default category should be 'other'");
+        let updated = update_custom_agent_impl(&pool, "cat-default", config)
+            .await
+            .unwrap();
+        assert_eq!(
+            updated.category, "other",
+            "default category should be 'other'"
+        );
     }
 
     #[tokio::test]

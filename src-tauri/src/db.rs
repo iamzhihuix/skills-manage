@@ -451,8 +451,10 @@ async fn seed_builtin_scan_directories(pool: &DbPool) -> Result<(), String> {
     }
 
     // Remove builtin scan directories that no longer exist in code
-    let builtin_paths: std::collections::HashSet<String> =
-        builtin_agents().into_iter().map(|a| a.global_skills_dir).collect();
+    let builtin_paths: std::collections::HashSet<String> = builtin_agents()
+        .into_iter()
+        .map(|a| a.global_skills_dir)
+        .collect();
     let all_db_dirs: Vec<(String,)> =
         sqlx::query_as("SELECT path FROM scan_directories WHERE is_builtin = 1")
             .fetch_all(pool)
@@ -474,9 +476,24 @@ async fn seed_builtin_scan_directories(pool: &DbPool) -> Result<(), String> {
 async fn seed_builtin_registries(pool: &DbPool) -> Result<(), String> {
     let now = chrono::Utc::now().to_rfc3339();
     let registries = vec![
-        ("anthropic", "Anthropic", "github", "https://github.com/anthropics/skills"),
-        ("openai", "OpenAI", "github", "https://github.com/openai/skills"),
-        ("baoyu-skills", "baoyu-skills", "github", "https://github.com/jimliu/baoyu-skills"),
+        (
+            "anthropic",
+            "Anthropic",
+            "github",
+            "https://github.com/anthropics/skills",
+        ),
+        (
+            "openai",
+            "OpenAI",
+            "github",
+            "https://github.com/openai/skills",
+        ),
+        (
+            "baoyu-skills",
+            "baoyu-skills",
+            "github",
+            "https://github.com/jimliu/baoyu-skills",
+        ),
     ];
     for (id, name, source_type, url) in registries {
         sqlx::query(
@@ -1038,10 +1055,7 @@ pub async fn delete_stale_skill_installations(
     for id in found_skill_ids {
         q = q.bind(id.as_str());
     }
-    q.execute(pool)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    q.execute(pool).await.map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Delete skills whose IDs are NOT in `found_skill_ids`. Also cascades to
@@ -1084,15 +1098,10 @@ pub async fn delete_skills_not_in_scope(
     for id in found_skill_ids {
         q = q.bind(id.as_str());
     }
-    q.execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    q.execute(pool).await.map_err(|e| e.to_string())?;
 
     // Remove the stale skills themselves.
-    let skill_sql = format!(
-        "DELETE FROM skills WHERE id NOT IN ({})",
-        placeholders
-    );
+    let skill_sql = format!("DELETE FROM skills WHERE id NOT IN ({})", placeholders);
     let mut q2 = sqlx::query(&skill_sql);
     for id in found_skill_ids {
         q2 = q2.bind(id.as_str());
@@ -1108,13 +1117,11 @@ pub async fn get_skill_installations(
     pool: &DbPool,
     skill_id: &str,
 ) -> Result<Vec<SkillInstallation>, String> {
-    sqlx::query_as::<_, SkillInstallation>(
-        "SELECT * FROM skill_installations WHERE skill_id = ?",
-    )
-    .bind(skill_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())
+    sqlx::query_as::<_, SkillInstallation>("SELECT * FROM skill_installations WHERE skill_id = ?")
+        .bind(skill_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────
@@ -1178,14 +1185,12 @@ pub async fn delete_custom_agent(pool: &DbPool, agent_id: &str) -> Result<(), St
     match agent {
         None => Err(format!("Agent '{}' not found", agent_id)),
         Some(a) if a.is_builtin => Err(format!("Cannot delete built-in agent '{}'", agent_id)),
-        Some(_) => {
-            sqlx::query("DELETE FROM agents WHERE id = ?")
-                .bind(agent_id)
-                .execute(pool)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        }
+        Some(_) => sqlx::query("DELETE FROM agents WHERE id = ?")
+            .bind(agent_id)
+            .execute(pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
     }
 }
 
@@ -1280,17 +1285,15 @@ pub async fn update_collection(
     description: Option<&str>,
 ) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
-    sqlx::query(
-        "UPDATE collections SET name = ?, description = ?, updated_at = ? WHERE id = ?",
-    )
-    .bind(name)
-    .bind(description)
-    .bind(&now)
-    .bind(collection_id)
-    .execute(pool)
-    .await
-    .map(|_| ())
-    .map_err(|e| e.to_string())
+    sqlx::query("UPDATE collections SET name = ?, description = ?, updated_at = ? WHERE id = ?")
+        .bind(name)
+        .bind(description)
+        .bind(&now)
+        .bind(collection_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a collection and all its skill memberships.
@@ -1355,6 +1358,20 @@ pub async fn get_collection_skills(
          ORDER BY cs.added_at",
     )
     .bind(collection_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Retrieve all collections that contain a given skill.
+pub async fn get_skill_collections(pool: &DbPool, skill_id: &str) -> Result<Vec<Collection>, String> {
+    sqlx::query_as::<_, Collection>(
+        "SELECT c.* FROM collections c
+         JOIN collection_skills cs ON c.id = cs.collection_id
+         WHERE cs.skill_id = ?
+         ORDER BY cs.added_at",
+    )
+    .bind(skill_id)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())
@@ -1492,13 +1509,11 @@ pub async fn get_discovered_skill_by_id(
     pool: &DbPool,
     id: &str,
 ) -> Result<Option<DiscoveredSkillRow>, String> {
-    sqlx::query_as::<_, DiscoveredSkillRow>(
-        "SELECT * FROM discovered_skills WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| e.to_string())
+    sqlx::query_as::<_, DiscoveredSkillRow>("SELECT * FROM discovered_skills WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Retrieve all discovered skills.
@@ -1805,9 +1820,12 @@ mod tests {
         upsert_skill(&pool, &skill_a).await.unwrap();
         upsert_skill(&pool, &skill_b).await.unwrap();
 
-        upsert_skill_installation(&pool, &make_installation("skill-a", "claude-code", "symlink"))
-            .await
-            .unwrap();
+        upsert_skill_installation(
+            &pool,
+            &make_installation("skill-a", "claude-code", "symlink"),
+        )
+        .await
+        .unwrap();
         upsert_skill_installation(&pool, &make_installation("skill-b", "cursor", "copy"))
             .await
             .unwrap();
@@ -1908,7 +1926,10 @@ mod tests {
     async fn test_cannot_delete_builtin_agent() {
         let pool = setup_test_db().await;
         let result = delete_custom_agent(&pool, "claude-code").await;
-        assert!(result.is_err(), "Should not be able to delete built-in agent");
+        assert!(
+            result.is_err(),
+            "Should not be able to delete built-in agent"
+        );
     }
 
     #[tokio::test]
@@ -1920,7 +1941,8 @@ mod tests {
             .expect("WorkBuddy agent should exist");
         assert_eq!(wb.display_name, "WorkBuddy");
         assert!(
-            wb.global_skills_dir.contains(".workbuddy/skills-marketplace/skills"),
+            wb.global_skills_dir
+                .contains(".workbuddy/skills-marketplace/skills"),
             "WorkBuddy should scan ~/.workbuddy/skills-marketplace/skills, got: {}",
             wb.global_skills_dir
         );
@@ -1942,7 +1964,14 @@ mod tests {
         );
         // Verify AutoClaw and WorkBuddy are distinct entries
         assert_ne!(ac.id, "workbuddy");
-        assert_ne!(ac.global_skills_dir, get_agent_by_id(&pool, "workbuddy").await.unwrap().unwrap().global_skills_dir);
+        assert_ne!(
+            ac.global_skills_dir,
+            get_agent_by_id(&pool, "workbuddy")
+                .await
+                .unwrap()
+                .unwrap()
+                .global_skills_dir
+        );
     }
 
     // ── Collections ───────────────────────────────────────────────────────────
@@ -1961,8 +1990,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_collections() {
         let pool = setup_test_db().await;
-        create_collection(&pool, "Collection A", None).await.unwrap();
-        create_collection(&pool, "Collection B", Some("Desc")).await.unwrap();
+        create_collection(&pool, "Collection A", None)
+            .await
+            .unwrap();
+        create_collection(&pool, "Collection B", Some("Desc"))
+            .await
+            .unwrap();
 
         let all = get_all_collections(&pool).await.unwrap();
         assert_eq!(all.len(), 2);
@@ -2045,12 +2078,11 @@ mod tests {
         delete_collection(&pool, &col.id).await.unwrap();
 
         // The collection_skills row should also be gone
-        let rows: Vec<_> =
-            sqlx::query("SELECT * FROM collection_skills WHERE collection_id = ?")
-                .bind(&col.id)
-                .fetch_all(&pool)
-                .await
-                .unwrap();
+        let rows: Vec<_> = sqlx::query("SELECT * FROM collection_skills WHERE collection_id = ?")
+            .bind(&col.id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
         assert!(rows.is_empty(), "Memberships should be cascade-deleted");
     }
 
@@ -2157,8 +2189,12 @@ mod tests {
     #[tokio::test]
     async fn test_remove_scan_directory() {
         let pool = setup_test_db().await;
-        add_scan_directory(&pool, "/tmp/removable", None).await.unwrap();
-        remove_scan_directory(&pool, "/tmp/removable").await.unwrap();
+        add_scan_directory(&pool, "/tmp/removable", None)
+            .await
+            .unwrap();
+        remove_scan_directory(&pool, "/tmp/removable")
+            .await
+            .unwrap();
 
         let dirs = get_scan_directories(&pool).await.unwrap();
         // Built-in dirs remain; only the custom one is removed.
@@ -2182,7 +2218,10 @@ mod tests {
         .unwrap();
 
         let result = remove_scan_directory(&pool, "/builtin/path").await;
-        assert!(result.is_err(), "Should not remove a builtin scan directory");
+        assert!(
+            result.is_err(),
+            "Should not remove a builtin scan directory"
+        );
     }
 
     #[tokio::test]
@@ -2195,8 +2234,12 @@ mod tests {
     #[tokio::test]
     async fn test_toggle_scan_directory() {
         let pool = setup_test_db().await;
-        add_scan_directory(&pool, "/tmp/toggle-dir", None).await.unwrap();
-        toggle_scan_directory(&pool, "/tmp/toggle-dir", false).await.unwrap();
+        add_scan_directory(&pool, "/tmp/toggle-dir", None)
+            .await
+            .unwrap();
+        toggle_scan_directory(&pool, "/tmp/toggle-dir", false)
+            .await
+            .unwrap();
 
         let dirs = get_scan_directories(&pool).await.unwrap();
         let dir = dirs.iter().find(|d| d.path == "/tmp/toggle-dir").unwrap();
@@ -2236,9 +2279,18 @@ mod tests {
         set_setting(&pool, "key2", "val2").await.unwrap();
         set_setting(&pool, "key3", "val3").await.unwrap();
 
-        assert_eq!(get_setting(&pool, "key1").await.unwrap().as_deref(), Some("val1"));
-        assert_eq!(get_setting(&pool, "key2").await.unwrap().as_deref(), Some("val2"));
-        assert_eq!(get_setting(&pool, "key3").await.unwrap().as_deref(), Some("val3"));
+        assert_eq!(
+            get_setting(&pool, "key1").await.unwrap().as_deref(),
+            Some("val1")
+        );
+        assert_eq!(
+            get_setting(&pool, "key2").await.unwrap().as_deref(),
+            Some("val2")
+        );
+        assert_eq!(
+            get_setting(&pool, "key3").await.unwrap().as_deref(),
+            Some("val3")
+        );
     }
 
     // ── Migration: created_at ─────────────────────────────────────────────────
@@ -2375,8 +2427,7 @@ mod tests {
             })
             .count();
         assert_eq!(
-            created_at_count,
-            1,
+            created_at_count, 1,
             "created_at column should appear exactly once after repeated init"
         );
     }

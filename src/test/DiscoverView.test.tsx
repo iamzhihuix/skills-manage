@@ -86,8 +86,10 @@ vi.mock("react-i18next", () => ({
         "marketplace.installed": "Installed",
         "sidebar.categoryLobster": "Lobster",
         "sidebar.categoryCoding": "Coding",
-        "platform.sourceSymlink": "symlink",
-        "platform.sourceCopy": "copy",
+        "platform.sourceCentral": "Central Skills",
+        "platform.sourceStandalone": "Standalone",
+        "platform.sourceSymlinkLabel": "symlink",
+        "platform.sourceCopyLabel": "copy",
         "platform.searchSkillLabel": `Search skill ${params?.name ?? ""}`,
       };
       return map[key] ?? key;
@@ -398,7 +400,7 @@ describe("DiscoverView", () => {
       expect(screen.getByTestId("skill-detail-drawer")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("drawer-skill:cursor__my-app__review")).toBeInTheDocument();
+    expect(screen.getByText("drawer-skill:review")).toBeInTheDocument();
     expect(window.location.pathname).toBe(location);
     expect(saveScrollSpy).not.toHaveBeenCalled();
   });

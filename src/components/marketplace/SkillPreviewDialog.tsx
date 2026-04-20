@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2,
   Download,
@@ -25,8 +25,11 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { parseFrontmatter } from "@/lib/frontmatter";
+import { setupExplanationStreamListeners } from "@/lib/explanationStream";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import i18n from "@/i18n";
 
 interface SkillPreviewDialogProps {
   open: boolean;
@@ -63,7 +66,15 @@ export function SkillPreviewDialog({
   const [viewMode, setViewMode] = useState<"markdown" | "raw">("markdown");
   const [explanation, setExplanation] = useState<string | null>(null);
   const [isExplaining, setIsExplaining] = useState(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
+  const explanationRequestRef = useRef(0);
+  const explanationUnlistenRef = useRef<(() => void) | null>(null);
   const browserMode = !isTauriRuntime();
+
+  const cleanupExplanation = useCallback(() => {
+    explanationUnlistenRef.current?.();
+    explanationUnlistenRef.current = null;
+  }, []);
 
   const fetchContent = useCallback(async () => {
     setIsLoadingContent(true);
@@ -82,6 +93,7 @@ export function SkillPreviewDialog({
     if (open && downloadUrl) {
       setContent("");
       setExplanation(null);
+      setExplanationError(null);
       setViewMode("markdown");
       fetchContent();
     }
@@ -89,30 +101,64 @@ export function SkillPreviewDialog({
 
   useEffect(() => {
     if (!open) {
+      cleanupExplanation();
       onAfterCloseFocus?.();
     }
-  }, [open, onAfterCloseFocus]);
+  }, [open, onAfterCloseFocus, cleanupExplanation]);
+
+  useEffect(() => cleanupExplanation, [cleanupExplanation]);
 
   async function handleExplain() {
     if (!content || browserMode) return;
+    explanationRequestRef.current += 1;
+    const requestId = explanationRequestRef.current;
+    const skillId = `skill-preview:${downloadUrl}`;
+    cleanupExplanation();
     setIsExplaining(true);
     setExplanation(null);
+    setExplanationError(null);
     try {
-      const result = await invoke<string>("explain_skill", { content });
-      setExplanation(result);
+      explanationUnlistenRef.current = await setupExplanationStreamListeners(skillId, {
+        onChunk: (chunkText) => {
+          if (requestId !== explanationRequestRef.current) return;
+          setIsExplaining(false);
+          setExplanation((prev) => `${prev ?? ""}${chunkText}`);
+        },
+        onComplete: (payload) => {
+          if (requestId !== explanationRequestRef.current) return;
+          cleanupExplanation();
+          const nextExplanation = payload.explanation ?? "";
+          if (nextExplanation.trim()) {
+            setExplanation((prev) => payload.explanation ?? prev);
+            setExplanationError(null);
+          } else {
+            setExplanation(null);
+            setExplanationError("AI explanation returned no content.");
+          }
+          setIsExplaining(false);
+        },
+        onError: (payload) => {
+          if (requestId !== explanationRequestRef.current) return;
+          cleanupExplanation();
+          setExplanation(null);
+          setExplanationError(payload.error ?? "Unknown explanation error");
+          setIsExplaining(false);
+        },
+      });
+      await invoke("refresh_skill_explanation", {
+        skillId,
+        content,
+        lang: i18n.language,
+      });
     } catch (err) {
-      setExplanation(`Error: ${String(err)}`);
-    } finally {
+      cleanupExplanation();
+      setExplanation(null);
+      setExplanationError(String(err));
       setIsExplaining(false);
     }
   }
 
-  // Strip YAML frontmatter for markdown display
-  const displayContent = (() => {
-    if (!content) return "";
-    const match = content.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
-    return match ? match[1].trim() : content;
-  })();
+  const displayContent = content ? parseFrontmatter(content).body : "";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -266,7 +312,7 @@ export function SkillPreviewDialog({
           )}
 
           {/* AI Explanation */}
-          {(explanation || isExplaining) && (
+          {(explanation || isExplaining || explanationError) && (
             <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
               <div className="flex items-center gap-1.5 text-xs font-medium text-primary mb-2">
                 <Bot className="size-3.5" />
@@ -276,6 +322,10 @@ export function SkillPreviewDialog({
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" />
                   {t("detail.explanationStreaming")}
+                </div>
+              ) : explanationError ? (
+                <div className="text-sm text-destructive whitespace-pre-wrap leading-relaxed">
+                  {explanationError}
                 </div>
               ) : (
                 <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">

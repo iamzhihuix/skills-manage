@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 import { AgentWithStatus, BatchInstallResult, SkillWithLinks } from "@/types";
 
-const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
+export const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
   {
     id: "claude-code",
     display_name: "Claude Code",
@@ -32,7 +32,7 @@ const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
   },
 ];
 
-const BROWSER_FIXTURE_SKILLS: SkillWithLinks[] = [
+export const BROWSER_FIXTURE_SKILLS: SkillWithLinks[] = [
   {
     id: "fixture-central-skill",
     name: "fixture-central-skill",

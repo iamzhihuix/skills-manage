@@ -216,7 +216,14 @@ fn scan_root_for_projects(
 ) -> Vec<DiscoveredProject> {
     let mut projects = Vec::new();
     let mut seen_project_paths = std::collections::HashSet::new();
-    scan_root_recursive(root, patterns, central_dir, 0, &mut projects, &mut seen_project_paths);
+    scan_root_recursive(
+        root,
+        patterns,
+        central_dir,
+        0,
+        &mut projects,
+        &mut seen_project_paths,
+    );
     projects
 }
 
@@ -364,10 +371,8 @@ async fn reconcile_discovered_skills(
 ) -> Result<(), String> {
     let all_rows = db::get_all_discovered_skills(pool).await?;
 
-    let found_set: std::collections::HashSet<&str> = found_skill_ids
-        .iter()
-        .map(|s| s.as_str())
-        .collect();
+    let found_set: std::collections::HashSet<&str> =
+        found_skill_ids.iter().map(|s| s.as_str()).collect();
 
     for row in &all_rows {
         // Skip skills just found in this scan — they are valid.
@@ -443,10 +448,12 @@ pub async fn set_scan_root_enabled(
     let pool = &state.db;
 
     // Load existing config or start fresh.
-    let mut config: HashMap<String, bool> = match db::get_setting(pool, "discover_scan_roots_config").await? {
-        Some(json) => serde_json::from_str(&json).map_err(|e| format!("Invalid scan roots config: {}", e))?,
-        None => HashMap::new(),
-    };
+    let mut config: HashMap<String, bool> =
+        match db::get_setting(pool, "discover_scan_roots_config").await? {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| format!("Invalid scan roots config: {}", e))?,
+            None => HashMap::new(),
+        };
 
     config.insert(path, enabled);
 
@@ -1080,7 +1087,10 @@ mod tests {
         let record = db::get_discovered_skill_by_id(&pool, "claude-code__project__my-skill")
             .await
             .unwrap();
-        assert!(record.is_none(), "discovered skill record should be removed");
+        assert!(
+            record.is_none(),
+            "discovered skill record should be removed"
+        );
     }
 
     /// Implementation of import_discovered_skill_to_central that accepts a custom central_dir
@@ -1203,10 +1213,7 @@ mod tests {
 
         // Verify the symlink was created.
         let link_path = agent_dir.join("my-skill");
-        assert!(
-            link_path.exists(),
-            "symlink target should exist"
-        );
+        assert!(link_path.exists(), "symlink target should exist");
         let meta = std::fs::symlink_metadata(&link_path).unwrap();
         assert!(meta.is_symlink(), "should be a symlink");
 
@@ -1457,7 +1464,10 @@ mod tests {
         // Verify the change is reflected.
         let updated = get_scan_roots_impl(&pool).await.unwrap();
         let changed = updated.iter().find(|r| r.path == some_path).unwrap();
-        assert!(!changed.enabled, "root should be disabled after set_scan_root_enabled");
+        assert!(
+            !changed.enabled,
+            "root should be disabled after set_scan_root_enabled"
+        );
 
         // Re-enable it.
         set_scan_root_enabled_impl(&pool, some_path.clone(), true)
@@ -1474,8 +1484,8 @@ mod tests {
         let mut roots = default_scan_roots();
 
         if let Some(json) = db::get_setting(pool, "discover_scan_roots_config").await? {
-            let config: HashMap<String, bool> =
-                serde_json::from_str(&json).map_err(|e| format!("Invalid scan roots config: {}", e))?;
+            let config: HashMap<String, bool> = serde_json::from_str(&json)
+                .map_err(|e| format!("Invalid scan roots config: {}", e))?;
             for root in &mut roots {
                 if let Some(&enabled) = config.get(&root.path) {
                     root.enabled = enabled;
@@ -1492,10 +1502,12 @@ mod tests {
         path: String,
         enabled: bool,
     ) -> Result<(), String> {
-        let mut config: HashMap<String, bool> = match db::get_setting(pool, "discover_scan_roots_config").await? {
-            Some(json) => serde_json::from_str(&json).map_err(|e| format!("Invalid scan roots config: {}", e))?,
-            None => HashMap::new(),
-        };
+        let mut config: HashMap<String, bool> =
+            match db::get_setting(pool, "discover_scan_roots_config").await? {
+                Some(json) => serde_json::from_str(&json)
+                    .map_err(|e| format!("Invalid scan roots config: {}", e))?,
+                None => HashMap::new(),
+            };
 
         config.insert(path, enabled);
 
@@ -1618,7 +1630,10 @@ mod tests {
 
         let rows = db::get_all_discovered_skills(&pool).await.unwrap();
         assert_eq!(rows.len(), 1, "should still have only 1 row");
-        assert_eq!(rows[0].name, "dup-skill", "original name should be preserved (INSERT OR IGNORE)");
+        assert_eq!(
+            rows[0].name, "dup-skill",
+            "original name should be preserved (INSERT OR IGNORE)"
+        );
     }
 
     #[tokio::test]
@@ -1646,7 +1661,9 @@ mod tests {
             .unwrap();
         assert!(found.is_some());
 
-        db::delete_discovered_skill(&pool, "to-delete").await.unwrap();
+        db::delete_discovered_skill(&pool, "to-delete")
+            .await
+            .unwrap();
 
         let gone = db::get_discovered_skill_by_id(&pool, "to-delete")
             .await
@@ -1664,12 +1681,20 @@ mod tests {
         // Create a skill already in central.
         let existing = central_dir.join("existing-skill");
         std::fs::create_dir_all(&existing).unwrap();
-        std::fs::write(existing.join("SKILL.md"), "---\nname: existing-skill\n---\n\n# Test\n").unwrap();
+        std::fs::write(
+            existing.join("SKILL.md"),
+            "---\nname: existing-skill\n---\n\n# Test\n",
+        )
+        .unwrap();
 
         // Also create the same skill in a project (discovered).
         let project_skill = tmp.path().join("project/.claude/skills/existing-skill");
         std::fs::create_dir_all(&project_skill).unwrap();
-        std::fs::write(project_skill.join("SKILL.md"), "---\nname: existing-skill\n---\n\n# Test\n").unwrap();
+        std::fs::write(
+            project_skill.join("SKILL.md"),
+            "---\nname: existing-skill\n---\n\n# Test\n",
+        )
+        .unwrap();
 
         let now = Utc::now().to_rfc3339();
         db::insert_discovered_skill(
@@ -1694,7 +1719,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "should refuse to import when skill already exists in central");
+        assert!(
+            result.is_err(),
+            "should refuse to import when skill already exists in central"
+        );
     }
 
     #[tokio::test]
@@ -1711,7 +1739,11 @@ mod tests {
         // Also create a discovered skill with the same name.
         let project_skill = tmp.path().join("project/.claude/skills/existing-skill");
         std::fs::create_dir_all(&project_skill).unwrap();
-        std::fs::write(project_skill.join("SKILL.md"), "---\nname: existing-skill\n---\n\n# Test\n").unwrap();
+        std::fs::write(
+            project_skill.join("SKILL.md"),
+            "---\nname: existing-skill\n---\n\n# Test\n",
+        )
+        .unwrap();
 
         let now = Utc::now().to_rfc3339();
         db::insert_discovered_skill(
@@ -1737,7 +1769,10 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_err(), "should refuse to import when skill already exists in agent dir");
+        assert!(
+            result.is_err(),
+            "should refuse to import when skill already exists in agent dir"
+        );
     }
 
     #[tokio::test]
@@ -1955,7 +1990,11 @@ mod tests {
 
         let projects = scan_root_for_projects(tmp.path(), &patterns, &central_dir);
 
-        assert_eq!(projects.len(), 2, "should find 2 projects at different depths");
+        assert_eq!(
+            projects.len(),
+            2,
+            "should find 2 projects at different depths"
+        );
         let names: Vec<&str> = projects.iter().map(|p| p.project_name.as_str()).collect();
         assert!(names.contains(&"project-1"), "should find project-1");
         assert!(names.contains(&"project-2"), "should find project-2");
@@ -2101,9 +2140,10 @@ mod tests {
         assert!(real.is_some(), "real skill should remain in DB");
 
         // The stale skill should be removed from the DB.
-        let stale = db::get_discovered_skill_by_id(&pool, "claude-code__stale-project__stale-skill")
-            .await
-            .unwrap();
+        let stale =
+            db::get_discovered_skill_by_id(&pool, "claude-code__stale-project__stale-skill")
+                .await
+                .unwrap();
         assert!(stale.is_none(), "stale skill should be removed from DB");
     }
 
@@ -2218,6 +2258,9 @@ mod tests {
         let record = db::get_discovered_skill_by_id(&pool, "claude-code__project__my-skill")
             .await
             .unwrap();
-        assert!(record.is_some(), "discovered record should be kept after platform installs");
+        assert!(
+            record.is_some(),
+            "discovered record should be kept after platform installs"
+        );
     }
 }

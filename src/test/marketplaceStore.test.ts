@@ -2,21 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/tauri", () => ({
   invoke: vi.fn(),
+  listen: vi.fn(),
   isTauriRuntime: vi.fn(() => true),
 }));
 
-import { invoke, isTauriRuntime } from "@/lib/tauri";
+import { invoke, listen, isTauriRuntime } from "@/lib/tauri";
 
 import { useMarketplaceStore } from "@/stores/marketplaceStore";
 
 const mockInvoke = vi.mocked(invoke);
+const mockListen = vi.mocked(listen);
 const mockIsTauriRuntime = vi.mocked(isTauriRuntime);
 
 describe("marketplaceStore", () => {
   beforeEach(() => {
     mockInvoke.mockReset();
+    mockListen.mockReset();
     mockIsTauriRuntime.mockReset();
     mockIsTauriRuntime.mockReturnValue(true);
+    mockListen.mockResolvedValue(vi.fn());
     useMarketplaceStore.setState({
       registries: [],
       skills: [],
@@ -33,6 +37,10 @@ describe("marketplaceStore", () => {
         importResult: null,
         previewedRepoUrl: null,
         error: null,
+        importProgress: null,
+        importStartedAt: null,
+        skillMarkdown: {},
+        aiSummaries: {},
       },
     });
   });
@@ -367,5 +375,111 @@ describe("marketplaceStore", () => {
     expect(mockInvoke).not.toHaveBeenCalled();
     expect(useMarketplaceStore.getState().githubImport.error).toContain("Desktop-only feature");
     expect(useMarketplaceStore.getState().githubImport.isImporting).toBe(false);
+  });
+
+  it("tracks github import progress events while importing", async () => {
+    const result = {
+      repo: {
+        owner: "dorukardahan",
+        repo: "twitterapi-io-skill",
+        branch: "main",
+        normalizedUrl: "https://github.com/dorukardahan/twitterapi-io-skill",
+      },
+      importedSkills: [],
+      skippedSkills: [],
+    };
+
+    type GitHubImportProgressHandler = (event: {
+      payload: {
+        phase: "writing";
+        currentSkill: string;
+        currentPath: string;
+        completedFiles: number;
+        totalFiles: number;
+        completedBytes: number;
+        totalBytes: number;
+      };
+    }) => void;
+
+    let progressHandler: GitHubImportProgressHandler | null = null;
+
+    mockListen.mockImplementation(async (eventName, handler) => {
+      if (eventName === "github-import:progress") {
+        progressHandler = handler as GitHubImportProgressHandler;
+      }
+      return vi.fn();
+    });
+
+    type ResolveImport = (value: typeof result) => void;
+    let resolveImport: ResolveImport | null = null;
+    mockInvoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveImport = resolve as ResolveImport;
+        }),
+    );
+
+    const importPromise = useMarketplaceStore
+      .getState()
+      .importGitHubRepoSkills("https://github.com/dorukardahan/twitterapi-io-skill", [
+        {
+          sourcePath: "twitterapi-io-skill/SKILL.md",
+          resolution: "overwrite",
+          renamedSkillId: null,
+        },
+      ]);
+
+    expect(useMarketplaceStore.getState().githubImport.importStartedAt).not.toBeNull();
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith("import_github_repo_skills", {
+        repoUrl: "https://github.com/dorukardahan/twitterapi-io-skill",
+        selections: [
+          {
+            sourcePath: "twitterapi-io-skill/SKILL.md",
+            resolution: "overwrite",
+            renamedSkillId: null,
+          },
+        ],
+      });
+      expect(resolveImport).not.toBeNull();
+    });
+
+    if (!progressHandler) {
+      throw new Error("Expected github import progress handler to be registered");
+    }
+    const progressHandlerFn = progressHandler as GitHubImportProgressHandler;
+
+    progressHandlerFn({
+      payload: {
+        phase: "writing",
+        currentSkill: "twitterapi-io-skill/SKILL.md",
+        currentPath: "SKILL.md",
+        completedFiles: 1,
+        totalFiles: 4,
+        completedBytes: 128,
+        totalBytes: 512,
+      },
+    });
+
+    expect(useMarketplaceStore.getState().githubImport.importProgress).toEqual({
+      phase: "writing",
+      currentSkill: "twitterapi-io-skill/SKILL.md",
+      currentPath: "SKILL.md",
+      completedFiles: 1,
+      totalFiles: 4,
+      completedBytes: 128,
+      totalBytes: 512,
+    });
+    expect(useMarketplaceStore.getState().githubImport.importStartedAt).not.toBeNull();
+
+    if (!resolveImport) {
+      throw new Error("Expected github import promise resolver to be captured");
+    }
+    const resolveImportFn = resolveImport as ResolveImport;
+
+    resolveImportFn(result);
+    await expect(importPromise).resolves.toEqual(result);
+    expect(useMarketplaceStore.getState().githubImport.importProgress).toBeNull();
+    expect(useMarketplaceStore.getState().githubImport.importStartedAt).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   Radar,
@@ -22,8 +22,11 @@ import { InstallDialog } from "@/components/central/InstallDialog";
 import { useDiscoverStore } from "@/stores/discoverStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { DiscoveredSkill, SkillWithLinks } from "@/types";
+import { invoke } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { consumeScrollPosition } from "@/lib/scrollRestoration";
+import { VirtualizedList } from "@/components/ui/virtualized-list";
+import { buildSearchText, normalizeSearchQuery } from "@/lib/search";
 
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
@@ -122,9 +125,20 @@ export function DiscoverView() {
     useState<DiscoveredSkill | null>(null);
   const [isInstallDialogOpen, setIsInstallDialogOpen] = useState(false);
   const [drawerSkillId, setDrawerSkillId] = useState<string | null>(null);
+  const [drawerFilePath, setDrawerFilePath] = useState<string | null>(null);
+  const [drawerDiscoverMeta, setDrawerDiscoverMeta] = useState<{
+    name: string;
+    description?: string;
+    platformName: string;
+    projectName: string;
+    filePath: string;
+    dirPath: string;
+    isAlreadyCentral: boolean;
+  } | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const [skillSearch, setSkillSearch] = useState("");
+  const deferredSkillSearch = useDeferredValue(skillSearch);
   const restorationState = location.state?.scrollRestoration as
     | { key?: string; scrollTop?: number }
     | undefined;
@@ -174,12 +188,8 @@ export function DiscoverView() {
   // happen during every filter pass when the user is just clicking between
   // projects or skills.
   const normalizedProjectQuery = useMemo(
-    () => projectSearch.trim().toLowerCase(),
+    () => normalizeSearchQuery(projectSearch),
     [projectSearch]
-  );
-  const normalizedSkillQuery = useMemo(
-    () => skillSearch.trim().toLowerCase(),
-    [skillSearch]
   );
 
   // Filtered project list for the left panel.
@@ -198,6 +208,22 @@ export function DiscoverView() {
     const decoded = decodeURIComponent(projectPath);
     return discoveredProjects.find((p) => p.project_path === decoded) ?? null;
   }, [discoveredProjects, projectPath]);
+  const effectiveSkillSearch =
+    selectedProject && selectedProject.skills.length > 80
+      ? deferredSkillSearch
+      : skillSearch;
+  const normalizedSkillQuery = useMemo(
+    () => normalizeSearchQuery(effectiveSkillSearch),
+    [effectiveSkillSearch]
+  );
+  const selectedProjectSkillEntries = useMemo(
+    () =>
+      (selectedProject?.skills ?? []).map((skill) => ({
+        skill,
+        searchText: buildSearchText([skill.name, skill.description]),
+      })),
+    [selectedProject]
+  );
 
   // Whether the currently selected project still matches the active project
   // filter. When it doesn't we keep the selection (valid context) but dim the
@@ -215,12 +241,15 @@ export function DiscoverView() {
   const displayedSkills = useMemo(() => {
     if (!selectedProject) return [];
     if (!normalizedSkillQuery) return selectedProject.skills;
-    return selectedProject.skills.filter(
-      (s) =>
-        s.name.toLowerCase().includes(normalizedSkillQuery) ||
-        s.description?.toLowerCase().includes(normalizedSkillQuery)
-    );
-  }, [selectedProject, normalizedSkillQuery]);
+    return selectedProjectSkillEntries
+      .filter(({ searchText }) => searchText.includes(normalizedSkillQuery))
+      .map(({ skill }) => skill);
+  }, [normalizedSkillQuery, selectedProject, selectedProjectSkillEntries]);
+
+  useEffect(() => {
+    if (!contentRef.current) return;
+    contentRef.current.scrollTop = 0;
+  }, [normalizedSkillQuery, selectedProject?.project_path]);
 
   useEffect(() => {
     if (!selectedProject || !restorationState?.key || !contentRef.current) {
@@ -343,8 +372,36 @@ export function DiscoverView() {
 
   const handleOpenDrawer = useCallback((skillId: string) => {
     setDrawerSkillId(skillId);
+    setDrawerFilePath(null);
+    setDrawerDiscoverMeta(null);
     setIsDrawerOpen(true);
   }, []);
+
+  const handleOpenDiscoverDrawer = useCallback((skill: DiscoveredSkill) => {
+    setDrawerSkillId(null);
+    setDrawerFilePath(skill.file_path);
+    setDrawerDiscoverMeta({
+      name: skill.name,
+      description: skill.description,
+      platformName: skill.platform_name,
+      projectName: skill.project_name,
+      filePath: skill.file_path,
+      dirPath: skill.dir_path,
+      isAlreadyCentral: skill.is_already_central,
+    });
+    setIsDrawerOpen(true);
+  }, []);
+
+  const handleOpenProjectPath = useCallback(
+    async (projectPath: string) => {
+      try {
+        await invoke("open_in_file_manager", { path: projectPath });
+      } catch (err) {
+        toast.error(t("discover.openPathError", { error: String(err) }));
+      }
+    },
+    [t]
+  );
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -503,7 +560,14 @@ export function DiscoverView() {
               <div className="px-6 py-3 border-b border-border flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <h2 className="text-sm font-semibold truncate">{selectedProject.project_name}</h2>
-                  <p className="text-xs text-muted-foreground truncate">{selectedProject.project_path}</p>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenProjectPath(selectedProject.project_path)}
+                    className="text-xs text-muted-foreground truncate hover:text-primary hover:underline cursor-pointer text-left block max-w-full"
+                    title={t("discover.openInFileManager")}
+                  >
+                    {selectedProject.project_path}
+                  </button>
                 </div>
                 <div className="relative w-48 shrink-0">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground pointer-events-none" />
@@ -532,7 +596,7 @@ export function DiscoverView() {
               </div>
 
               {/* Skill cards */}
-              <div ref={contentRef} className="flex-1 overflow-auto p-4 space-y-2">
+              <div ref={contentRef} className="flex-1 overflow-auto p-4">
                 {displayedSkills.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full gap-3 py-12">
                     <Radar className="size-8 text-muted-foreground opacity-40" />
@@ -553,30 +617,75 @@ export function DiscoverView() {
                       </Button>
                     )}
                   </div>
+                ) : displayedSkills.length > 80 ? (
+                  <VirtualizedList
+                    items={displayedSkills}
+                    itemHeight={120}
+                    itemGap={8}
+                    overscan={6}
+                    scrollContainerRef={contentRef}
+                    itemKey={(skill) => skill.id}
+                    renderItem={(skill) => (
+                      <UnifiedSkillCard
+                        key={skill.id}
+                        name={skill.name}
+                        description={skill.description}
+                        checkbox={{
+                          checked: selectedSkillIds.has(skill.id),
+                          onChange: () => toggleSkillSelection(skill.id),
+                        }}
+                        isCentral={skill.is_already_central}
+                        platformBadge={{ id: skill.platform_id, name: skill.platform_name }}
+                        projectBadge={skill.project_name}
+                        onDetail={
+                          skill.is_already_central
+                            ? () => handleOpenDrawer(skill.dir_path.split("/").pop() ?? skill.id)
+                            : () => handleOpenDiscoverDrawer(skill)
+                        }
+                        detailButtonRef={(node) => setDetailButtonRef(
+                          skill.is_already_central
+                            ? (skill.dir_path.split("/").pop() ?? skill.id)
+                            : skill.id,
+                          node,
+                        )}
+                        onInstallToCentral={() => handleInstallToCentral(skill.id)}
+                        onInstallToPlatform={() => handleInstallToPlatform(skill)}
+                        isLoading={importingIds.has(skill.id)}
+                        className="h-[120px]"
+                      />
+                    )}
+                  />
                 ) : (
-                  displayedSkills.map((skill) => (
-                    <UnifiedSkillCard
-                      key={skill.id}
-                      name={skill.name}
-                      description={skill.description}
-                      checkbox={{
-                        checked: selectedSkillIds.has(skill.id),
-                        onChange: () => toggleSkillSelection(skill.id),
-                      }}
-                      isCentral={skill.is_already_central}
-                      platformBadge={{ id: skill.platform_id, name: skill.platform_name }}
-                      projectBadge={skill.project_name}
-                      onDetail={
-                        skill.is_already_central
-                          ? () => handleOpenDrawer(skill.id)
-                          : undefined
-                      }
-                      detailButtonRef={(node) => setDetailButtonRef(skill.id, node)}
-                      onInstallToCentral={() => handleInstallToCentral(skill.id)}
-                      onInstallToPlatform={() => handleInstallToPlatform(skill)}
-                      isLoading={importingIds.has(skill.id)}
-                    />
-                  ))
+                  <div className="space-y-2">
+                    {displayedSkills.map((skill) => (
+                      <UnifiedSkillCard
+                        key={skill.id}
+                        name={skill.name}
+                        description={skill.description}
+                        checkbox={{
+                          checked: selectedSkillIds.has(skill.id),
+                          onChange: () => toggleSkillSelection(skill.id),
+                        }}
+                        isCentral={skill.is_already_central}
+                        platformBadge={{ id: skill.platform_id, name: skill.platform_name }}
+                        projectBadge={skill.project_name}
+                        onDetail={
+                          skill.is_already_central
+                            ? () => handleOpenDrawer(skill.dir_path.split("/").pop() ?? skill.id)
+                            : () => handleOpenDiscoverDrawer(skill)
+                        }
+                        detailButtonRef={(node) => setDetailButtonRef(
+                          skill.is_already_central
+                            ? (skill.dir_path.split("/").pop() ?? skill.id)
+                            : skill.id,
+                          node,
+                        )}
+                        onInstallToCentral={() => handleInstallToCentral(skill.id)}
+                        onInstallToPlatform={() => handleInstallToPlatform(skill)}
+                        isLoading={importingIds.has(skill.id)}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
             </>
@@ -646,16 +755,20 @@ export function DiscoverView() {
       <SkillDetailDrawer
         open={isDrawerOpen}
         skillId={drawerSkillId}
+        filePath={drawerFilePath}
+        discoverMetadata={drawerDiscoverMeta}
         onOpenChange={(open) => {
           setIsDrawerOpen(open);
           if (!open) {
             setDrawerSkillId(null);
+            setDrawerFilePath(null);
+            setDrawerDiscoverMeta(null);
           }
         }}
         returnFocusRef={
-          drawerSkillId
+          (drawerSkillId || drawerFilePath)
             ? {
-                current: detailButtonRefs.current[drawerSkillId] ?? null,
+                current: detailButtonRefs.current[drawerSkillId ?? ""] ?? null,
               }
             : undefined
         }

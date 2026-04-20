@@ -70,8 +70,8 @@ export interface SkillInstallation {
 
 export interface SkillDetail extends Omit<Skill, "content"> {
   installations: SkillInstallation[];
-  /** Collection IDs this skill belongs to. Available once collections milestone is complete. */
-  collections?: string[];
+  /** Collections this skill currently belongs to. */
+  collections?: Collection[];
 }
 
 export interface SkillWithLinks {
@@ -270,4 +270,16 @@ export interface GitHubRepoImportResult {
   repo: GitHubRepoRef;
   importedSkills: ImportedGitHubSkillSummary[];
   skippedSkills: string[];
+}
+
+export type GitHubImportProgressPhase = "preparing" | "writing" | "finalizing";
+
+export interface GitHubImportProgressPayload {
+  phase: GitHubImportProgressPhase;
+  currentSkill?: string | null;
+  currentPath?: string | null;
+  completedFiles: number;
+  totalFiles: number;
+  completedBytes: number;
+  totalBytes: number;
 }

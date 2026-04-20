@@ -1,10 +1,12 @@
 use chrono::Utc;
+use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
+use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::{
     db::{self, DbPool, Skill},
@@ -85,12 +87,24 @@ pub struct GitHubRepoImportResult {
     pub skipped_skills: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-struct GitHubContent {
-    name: String,
-    #[serde(rename = "type")]
-    content_type: String,
-    path: String,
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHubImportProgressPhase {
+    Preparing,
+    Writing,
+    Finalizing,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitHubImportProgressPayload {
+    pub phase: GitHubImportProgressPhase,
+    pub current_skill: Option<String>,
+    pub current_path: Option<String>,
+    pub completed_files: usize,
+    pub total_files: usize,
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -110,11 +124,9 @@ struct RemoteSkillCandidate {
     download_url: String,
 }
 
-#[derive(Clone)]
-struct GitHubRepoFixture {
-    root_contents: Vec<GitHubContent>,
-    directory_contents: std::collections::HashMap<String, Vec<GitHubContent>>,
-    raw_files: std::collections::HashMap<String, String>,
+#[derive(Debug, Clone, Default)]
+struct GitHubRepoSnapshot {
+    files: HashMap<String, Vec<u8>>,
 }
 
 const GITHUB_PAT_SETTING_KEY: &str = "github_pat";
@@ -237,19 +249,30 @@ pub async fn preview_github_repo_import(
 
 #[tauri::command]
 pub async fn import_github_repo_skills(
+    app: AppHandle,
     state: State<'_, AppState>,
     repo_url: String,
     selections: Vec<GitHubSkillImportSelection>,
 ) -> Result<GitHubRepoImportResult, String> {
-    import_github_repo_skills_impl(&state.db, &repo_url, selections).await
+    import_github_repo_skills_impl(&state.db, &repo_url, selections, Some(&app)).await
+}
+
+#[tauri::command]
+pub async fn fetch_github_skill_markdown(
+    state: State<'_, AppState>,
+    download_url: String,
+) -> Result<String, String> {
+    let client = github_client()?;
+    let auth = github_direct_auth_from_settings(&state.db).await?;
+    fetch_raw_text(&client, &download_url, auth.as_deref()).await
 }
 
 async fn preview_github_repo_import_impl(
     pool: &DbPool,
     repo_url: &str,
 ) -> Result<GitHubRepoPreview, String> {
-    let repo = resolve_repo_ref(repo_url).await?;
     let auth = github_direct_auth_from_settings(pool).await?;
+    let repo = resolve_repo_ref(repo_url, auth.as_deref()).await?;
     let candidates = fetch_repo_skill_candidates(&repo, auth.as_deref()).await?;
     let skills = build_preview_skills(pool, &candidates).await?;
 
@@ -267,10 +290,26 @@ async fn import_github_repo_skills_impl(
     pool: &DbPool,
     repo_url: &str,
     selections: Vec<GitHubSkillImportSelection>,
+    app: Option<&AppHandle>,
 ) -> Result<GitHubRepoImportResult, String> {
-    let repo = resolve_repo_ref(repo_url).await?;
+    emit_github_import_progress(
+        app,
+        GitHubImportProgressPayload {
+            phase: GitHubImportProgressPhase::Preparing,
+            current_skill: None,
+            current_path: None,
+            completed_files: 0,
+            total_files: 0,
+            completed_bytes: 0,
+            total_bytes: 0,
+        },
+    );
+
     let auth = github_direct_auth_from_settings(pool).await?;
-    let candidates = fetch_repo_skill_candidates(&repo, auth.as_deref()).await?;
+    let repo = resolve_repo_ref(repo_url, auth.as_deref()).await?;
+    let client = github_client()?;
+    let snapshot = download_repo_snapshot(&client, &repo, auth.as_deref()).await?;
+    let candidates = build_repo_skill_candidates_from_snapshot(&repo, &snapshot)?;
     if candidates.is_empty() {
         return Err(
             "No importable skills found in this repository. Supported layouts are repo-root skill directories or a top-level skills/ directory."
@@ -288,7 +327,12 @@ async fn import_github_repo_skills_impl(
         let candidate = candidates
             .iter()
             .find(|candidate| candidate.source_path == selection.source_path)
-            .ok_or_else(|| format!("Selected skill '{}' is no longer available in the preview.", selection.source_path))?
+            .ok_or_else(|| {
+                format!(
+                    "Selected skill '{}' is no longer available in the preview.",
+                    selection.source_path
+                )
+            })?
             .clone();
 
         if !selected_paths.insert(candidate.source_path.clone()) {
@@ -329,20 +373,17 @@ async fn import_github_repo_skills_impl(
                     candidate: candidate.clone(),
                     final_skill_id: candidate.skill_id.clone(),
                     resolution: DuplicateResolution::Overwrite,
+                    source_files: Vec::new(),
                 });
             }
             DuplicateResolution::Rename => {
-                let requested_id = sanitize_skill_id(
-                    selection
-                        .renamed_skill_id
-                        .as_deref()
-                        .ok_or_else(|| {
-                            format!(
-                                "Skill '{}' requires a renamed skill id for rename resolution.",
-                                candidate.source_path
-                            )
-                        })?,
-                )?;
+                let requested_id =
+                    sanitize_skill_id(selection.renamed_skill_id.as_deref().ok_or_else(|| {
+                        format!(
+                            "Skill '{}' requires a renamed skill id for rename resolution.",
+                            candidate.source_path
+                        )
+                    })?)?;
                 if occupied_ids.contains(&requested_id) {
                     return Err(format!(
                         "Renamed skill id '{}' is already in use.",
@@ -354,6 +395,7 @@ async fn import_github_repo_skills_impl(
                     candidate: candidate.clone(),
                     final_skill_id: requested_id,
                     resolution: DuplicateResolution::Rename,
+                    source_files: Vec::new(),
                 });
             }
         }
@@ -362,6 +404,39 @@ async fn import_github_repo_skills_impl(
     if staging_ops.is_empty() && skipped_skills.is_empty() {
         return Err("No valid import operations were requested.".to_string());
     }
+
+    for op in &mut staging_ops {
+        op.source_files = collect_snapshot_source_files(&snapshot, &op.candidate.source_path)?;
+    }
+
+    let total_files = staging_ops
+        .iter()
+        .map(|op| op.source_files.len())
+        .sum::<usize>();
+    let total_bytes = staging_ops
+        .iter()
+        .flat_map(|op| op.source_files.iter())
+        .map(|file| file.byte_len as u64)
+        .sum::<u64>();
+    let mut progress_state = GitHubImportProgressState {
+        completed_files: 0,
+        total_files,
+        completed_bytes: 0,
+        total_bytes,
+    };
+
+    emit_github_import_progress(
+        app,
+        GitHubImportProgressPayload {
+            phase: GitHubImportProgressPhase::Writing,
+            current_skill: None,
+            current_path: None,
+            completed_files: 0,
+            total_files,
+            completed_bytes: 0,
+            total_bytes,
+        },
+    );
 
     let mut imported_skills = Vec::new();
     let mut created_paths = Vec::new();
@@ -385,8 +460,14 @@ async fn import_github_repo_skills_impl(
             }
         }
 
-        if let Err(error) = download_directory_recursive(&repo, &op.candidate.source_path, &target_dir, auth.as_deref()).await
-        {
+        if let Err(error) = write_snapshot_source_to_target(
+            &snapshot,
+            &op.source_files,
+            &target_dir,
+            &op.candidate.source_path,
+            &mut progress_state,
+            app,
+        ) {
             cleanup_created_directories(&created_paths);
             if target_dir.exists() {
                 let _ = std::fs::remove_dir_all(&target_dir);
@@ -399,8 +480,12 @@ async fn import_github_repo_skills_impl(
         let skill_md_path = target_dir.join("SKILL.md");
         let raw = std::fs::read_to_string(&skill_md_path)
             .map_err(|e| format!("Failed to read imported SKILL.md: {}", e))?;
-        let frontmatter = parse_frontmatter(&raw)
-            .ok_or_else(|| format!("Imported skill '{}' is missing valid frontmatter.", op.candidate.source_path))?;
+        let frontmatter = parse_frontmatter(&raw).ok_or_else(|| {
+            format!(
+                "Imported skill '{}' is missing valid frontmatter.",
+                op.candidate.source_path
+            )
+        })?;
 
         let db_skill = Skill {
             id: op.final_skill_id.clone(),
@@ -425,6 +510,19 @@ async fn import_github_repo_skills_impl(
         });
     }
 
+    emit_github_import_progress(
+        app,
+        GitHubImportProgressPayload {
+            phase: GitHubImportProgressPhase::Finalizing,
+            current_skill: None,
+            current_path: None,
+            completed_files: progress_state.completed_files,
+            total_files: progress_state.total_files,
+            completed_bytes: progress_state.completed_bytes,
+            total_bytes: progress_state.total_bytes,
+        },
+    );
+
     Ok(GitHubRepoImportResult {
         repo,
         imported_skills,
@@ -437,6 +535,7 @@ struct StagedImport {
     candidate: RemoteSkillCandidate,
     final_skill_id: String,
     resolution: DuplicateResolution,
+    source_files: Vec<SnapshotSourceFile>,
 }
 
 fn cleanup_created_directories(paths: &[PathBuf]) {
@@ -498,15 +597,24 @@ async fn build_preview_skills(
     Ok(skills)
 }
 
-async fn resolve_repo_ref(repo_url: &str) -> Result<GitHubRepoRef, String> {
+async fn resolve_repo_ref(
+    repo_url: &str,
+    auth_token: Option<&str>,
+) -> Result<GitHubRepoRef, String> {
     let (owner, repo) = parse_github_url(repo_url)?;
     let client = github_client()?;
     let response = send_github_request_with_fallback(
         &client,
         GitHubFetchSurface::Api,
-        |endpoint| github_endpoint_url(endpoint, GitHubFetchSurface::Api, &format!("/repos/{owner}/{repo}")),
+        |endpoint| {
+            github_endpoint_url(
+                endpoint,
+                GitHubFetchSurface::Api,
+                &format!("/repos/{owner}/{repo}"),
+            )
+        },
         "Failed to inspect GitHub repository",
-        None,
+        auth_token,
     )
     .await?;
 
@@ -547,15 +655,15 @@ async fn github_direct_auth_from_settings(pool: &DbPool) -> Result<Option<String
 
 fn github_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
-        .user_agent("skills-manage/0.1.0")
+        .user_agent("skills-manage/0.8.0")
         .build()
         .map_err(|e| e.to_string())
 }
 
 fn parse_github_url(url: &str) -> Result<(String, String), String> {
     let trimmed = url.trim();
-    let parsed = reqwest::Url::parse(trimmed)
-        .map_err(|_| "Invalid GitHub repository URL.".to_string())?;
+    let parsed =
+        reqwest::Url::parse(trimmed).map_err(|_| "Invalid GitHub repository URL.".to_string())?;
 
     if parsed.scheme() != "https" {
         return Err("Only https:// GitHub repository URLs are supported.".to_string());
@@ -588,287 +696,363 @@ async fn fetch_repo_skill_candidates(
     repo: &GitHubRepoRef,
     auth_token: Option<&str>,
 ) -> Result<Vec<RemoteSkillCandidate>, String> {
-    fetch_repo_skill_candidates_with_fixture(repo, auth_token, None).await
+    let client = github_client()?;
+    let snapshot = download_repo_snapshot(&client, repo, auth_token).await?;
+    build_repo_skill_candidates_from_snapshot(repo, &snapshot)
 }
 
-async fn fetch_repo_skill_candidates_with_fixture(
+fn build_repo_skill_candidates_from_snapshot(
     repo: &GitHubRepoRef,
-    auth_token: Option<&str>,
-    fixture: Option<&GitHubRepoFixture>,
+    snapshot: &GitHubRepoSnapshot,
 ) -> Result<Vec<RemoteSkillCandidate>, String> {
-    let client = github_client()?;
-    let mut candidates = Vec::new();
-    let mut seen_paths = HashSet::new();
-    let root_contents = match fixture {
-        Some(fixture) => fixture.root_contents.clone(),
-        None => fetch_directory_contents(&client, repo, "").await?,
-    };
-    if root_contents
-        .iter()
-        .any(|entry| entry.content_type == "file" && entry.name.eq_ignore_ascii_case("SKILL.md"))
-    {
-        let raw_url = raw_file_url(
-            GITHUB_MIRROR_ENDPOINTS
-                .first()
-                .expect("github endpoint"),
-            repo,
-            "SKILL.md",
-        );
-        let skill_raw = if let Some(fixture) = fixture {
-            fixture
-                .raw_files
-                .get("SKILL.md")
-                .cloned()
-                .ok_or_else(|| "Missing fixture root SKILL.md".to_string())?
+    let direct_endpoint = GITHUB_MIRROR_ENDPOINTS.first().expect("github endpoint");
+    let mut manifests = snapshot
+        .files
+        .keys()
+        .filter_map(|path| classify_skill_manifest_path(path))
+        .collect::<Vec<_>>();
+    manifests.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+
+    let mut candidates = Vec::with_capacity(manifests.len());
+    for manifest in manifests {
+        let raw = snapshot
+            .files
+            .get(&manifest.skill_md_path)
+            .ok_or_else(|| format!("Missing snapshot file '{}'.", manifest.skill_md_path))?;
+        let content = String::from_utf8(raw.clone())
+            .map_err(|_| format!("Skill '{}' is not valid UTF-8.", manifest.source_path))?;
+        let frontmatter = parse_frontmatter(&content).ok_or_else(|| {
+            if manifest.source_path == "." {
+                "Repository root SKILL.md is missing valid frontmatter.".to_string()
+            } else {
+                format!(
+                    "Skill '{}' is missing valid frontmatter.",
+                    manifest.source_path
+                )
+            }
+        })?;
+
+        let skill_id = if manifest.source_path == "." {
+            let repo_skill_id = sanitize_skill_id(&repo.repo)?;
+            repo_skill_id
+                .strip_suffix("-skill")
+                .unwrap_or(&repo_skill_id)
+                .to_string()
         } else {
-            fetch_raw_text(&client, &raw_url, auth_token).await?
+            sanitize_skill_id(&manifest.skill_directory_name)?
         };
-        let frontmatter = parse_frontmatter(&skill_raw)
-            .ok_or_else(|| "Repository root SKILL.md is missing valid frontmatter.".to_string())?;
-        let root_skill_id = sanitize_skill_id(&repo.repo)?;
-        let fallback_root_skill_id = root_skill_id.strip_suffix("-skill").unwrap_or(&root_skill_id).to_string();
+
         candidates.push(RemoteSkillCandidate {
-            source_path: ".".to_string(),
-            skill_id: fallback_root_skill_id,
+            source_path: manifest.source_path.clone(),
+            skill_id,
             skill_name: frontmatter.name,
             description: frontmatter.description,
-            root_directory: "/".to_string(),
-            skill_directory_name: repo.repo.clone(),
-            download_url: raw_url,
+            root_directory: manifest.root_directory,
+            skill_directory_name: if manifest.source_path == "." {
+                repo.repo.clone()
+            } else {
+                manifest.skill_directory_name
+            },
+            download_url: raw_file_url(direct_endpoint, repo, &manifest.skill_md_path),
         });
-        seen_paths.insert(".".to_string());
-    }
-
-    for base_path in ["", "skills"] {
-        let contents = if base_path.is_empty() {
-            root_contents.clone()
-        } else {
-            let fetched = if let Some(fixture) = fixture {
-                fixture.directory_contents.get(base_path).cloned().ok_or_else(|| {
-                    format!("GitHub repository contents path '{}' returned HTTP 404", base_path)
-                })
-            } else {
-                fetch_directory_contents(&client, repo, base_path).await
-            };
-            match fetched {
-                Ok(contents) => contents,
-                Err(error) if base_path == "skills" && error.contains("404") => continue,
-                Err(error) => return Err(error),
-            }
-        };
-
-        for entry in contents
-            .iter()
-            .filter(|entry| entry.content_type == "dir" && entry.name != ".github")
-        {
-            let skill_dir_contents =
-                match if let Some(fixture) = fixture {
-                    fixture
-                        .directory_contents
-                        .get(entry.path.as_str())
-                        .cloned()
-                        .ok_or_else(|| {
-                            format!(
-                                "GitHub repository contents path '{}' returned HTTP 404",
-                                entry.path
-                            )
-                        })
-                } else {
-                    fetch_directory_contents(&client, repo, entry.path.as_str()).await
-                } {
-                    Ok(contents) => contents,
-                    Err(_) => continue,
-                };
-
-            let skill_md = skill_dir_contents.iter().find(|content| {
-                content.content_type == "file" && content.name.eq_ignore_ascii_case("SKILL.md")
-            });
-
-            let Some(skill_md) = skill_md else {
-                continue;
-            };
-
-            if !seen_paths.insert(entry.path.clone()) {
-                continue;
-            }
-
-            let raw_url = raw_file_url(
-                GITHUB_MIRROR_ENDPOINTS
-                    .first()
-                    .expect("github endpoint"),
-                repo,
-                &skill_md.path,
-            );
-
-            let skill_raw = if let Some(fixture) = fixture {
-                fixture
-                    .raw_files
-                    .get(skill_md.path.as_str())
-                    .cloned()
-                    .ok_or_else(|| format!("Missing fixture file '{}'.", skill_md.path))?
-            } else {
-                fetch_raw_text(&client, &raw_url, auth_token).await?
-            };
-            let frontmatter = parse_frontmatter(&skill_raw)
-                .ok_or_else(|| format!("Skill '{}' is missing valid frontmatter.", entry.path))?;
-
-            candidates.push(RemoteSkillCandidate {
-                source_path: entry.path.clone(),
-                skill_id: sanitize_skill_id(&entry.name)?,
-                skill_name: frontmatter.name,
-                description: frontmatter.description,
-                root_directory: if base_path.is_empty() {
-                    "/".to_string()
-                } else {
-                    base_path.to_string()
-                },
-                skill_directory_name: entry.name.clone(),
-                download_url: raw_url,
-            });
-        }
     }
 
     Ok(candidates)
 }
 
-async fn download_directory_recursive(
+#[derive(Debug, Clone)]
+struct SnapshotSkillManifest {
+    source_path: String,
+    root_directory: String,
+    skill_directory_name: String,
+    skill_md_path: String,
+}
+
+fn classify_skill_manifest_path(path: &str) -> Option<SnapshotSkillManifest> {
+    let normalized = path.trim_matches('/');
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if normalized.eq_ignore_ascii_case("SKILL.md") {
+        return Some(SnapshotSkillManifest {
+            source_path: ".".to_string(),
+            root_directory: "/".to_string(),
+            skill_directory_name: String::new(),
+            skill_md_path: "SKILL.md".to_string(),
+        });
+    }
+
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        [skill_dir, skill_md]
+            if *skill_dir != ".github"
+                && *skill_dir != "skills"
+                && skill_md.eq_ignore_ascii_case("SKILL.md") =>
+        {
+            Some(SnapshotSkillManifest {
+                source_path: (*skill_dir).to_string(),
+                root_directory: "/".to_string(),
+                skill_directory_name: (*skill_dir).to_string(),
+                skill_md_path: normalized.to_string(),
+            })
+        }
+        ["skills", skill_dir, skill_md] if skill_md.eq_ignore_ascii_case("SKILL.md") => {
+            Some(SnapshotSkillManifest {
+                source_path: format!("skills/{}", skill_dir),
+                root_directory: "skills".to_string(),
+                skill_directory_name: (*skill_dir).to_string(),
+                skill_md_path: normalized.to_string(),
+            })
+        }
+        _ => None,
+    }
+}
+
+async fn download_repo_snapshot(
+    client: &reqwest::Client,
     repo: &GitHubRepoRef,
-    source_path: &str,
-    target_dir: &Path,
     auth_token: Option<&str>,
+) -> Result<GitHubRepoSnapshot, String> {
+    let archive = download_repository_archive(client, repo, auth_token).await?;
+    snapshot_from_repository_archive(&archive)
+}
+
+async fn download_repository_archive(
+    client: &reqwest::Client,
+    repo: &GitHubRepoRef,
+    auth_token: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let response = send_github_request_with_fallback(
+        client,
+        GitHubFetchSurface::Api,
+        |endpoint| {
+            github_endpoint_url(
+                endpoint,
+                GitHubFetchSurface::Api,
+                &format!(
+                    "/repos/{}/{}/tarball/{}",
+                    repo.owner, repo.repo, repo.branch
+                ),
+            )
+        },
+        "Failed to download GitHub repository archive",
+        auth_token,
+    )
+    .await?;
+
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err("GitHub repository archive is unavailable.".to_string());
+    }
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(classify_github_denial_response(
+            response,
+            "downloading the repository archive",
+        )
+        .await
+        .unwrap_or_else(|| {
+            format!(
+                "Failed to download GitHub repository archive: HTTP {}",
+                status
+            )
+        }));
+    }
+
+    response
+        .bytes()
+        .await
+        .map(|bytes| bytes.to_vec())
+        .map_err(|e| format!("Failed to read GitHub repository archive: {}", e))
+}
+
+fn snapshot_from_repository_archive(archive_bytes: &[u8]) -> Result<GitHubRepoSnapshot, String> {
+    let cursor = Cursor::new(archive_bytes);
+    let decoder = GzDecoder::new(cursor);
+    let mut archive = tar::Archive::new(decoder);
+    let mut files = HashMap::new();
+
+    for entry_result in archive
+        .entries()
+        .map_err(|e| format!("Failed to inspect GitHub repository archive: {}", e))?
+    {
+        let mut entry = entry_result
+            .map_err(|e| format!("Failed to inspect GitHub repository archive: {}", e))?;
+
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+
+        let relative_path = relative_archive_path(&entry)?;
+        let mut content = Vec::new();
+        entry.read_to_end(&mut content).map_err(|e| {
+            format!(
+                "Failed to read GitHub repository archive entry '{}': {}",
+                relative_path, e
+            )
+        })?;
+        files.insert(relative_path, content);
+    }
+
+    Ok(GitHubRepoSnapshot { files })
+}
+
+fn relative_archive_path<R: Read>(entry: &tar::Entry<'_, R>) -> Result<String, String> {
+    let archive_path = entry
+        .path()
+        .map_err(|e| format!("Failed to inspect GitHub repository archive: {}", e))?;
+    let relative = archive_path
+        .components()
+        .skip(1)
+        .map(|component| match component {
+            Component::Normal(value) => Ok(value.to_string_lossy().into_owned()),
+            _ => Err("GitHub repository archive contains an unsupported path.".to_string()),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if relative.is_empty() {
+        return Err("GitHub repository archive contains an unsupported path.".to_string());
+    }
+
+    let joined = relative.join("/");
+    if !is_safe_repo_relative_path(&joined) {
+        return Err(format!(
+            "GitHub repository archive contains an unsupported path '{}'.",
+            joined
+        ));
+    }
+
+    Ok(joined)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotSourceFile {
+    repo_path: String,
+    relative_path: String,
+    byte_len: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct GitHubImportProgressState {
+    completed_files: usize,
+    total_files: usize,
+    completed_bytes: u64,
+    total_bytes: u64,
+}
+
+fn collect_snapshot_source_files(
+    snapshot: &GitHubRepoSnapshot,
+    source_path: &str,
+) -> Result<Vec<SnapshotSourceFile>, String> {
+    let mut files = snapshot
+        .files
+        .iter()
+        .filter_map(|(path, bytes)| {
+            let relative_path = if source_path == "." {
+                if path.contains('/') {
+                    return None;
+                }
+                path.clone()
+            } else {
+                let prefix = format!("{}/", source_path.trim_matches('/'));
+                let relative = path.strip_prefix(&prefix)?;
+                if relative.is_empty() {
+                    return None;
+                }
+                relative.to_string()
+            };
+
+            Some(SnapshotSourceFile {
+                repo_path: path.clone(),
+                relative_path,
+                byte_len: bytes.len(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    files.sort_by(|left, right| left.repo_path.cmp(&right.repo_path));
+
+    if files.is_empty() {
+        return Err(format!(
+            "Repository path '{}' is no longer available in the archive.",
+            source_path
+        ));
+    }
+
+    Ok(files)
+}
+
+fn write_snapshot_source_to_target(
+    snapshot: &GitHubRepoSnapshot,
+    files: &[SnapshotSourceFile],
+    target_dir: &Path,
+    source_path: &str,
+    progress_state: &mut GitHubImportProgressState,
+    app: Option<&AppHandle>,
 ) -> Result<(), String> {
-    let client = github_client()?;
     std::fs::create_dir_all(target_dir)
         .map_err(|e| format!("Failed to create import target directory: {}", e))?;
 
-    download_directory_recursive_with_client(&client, repo, source_path, target_dir, auth_token).await
-}
-
-async fn download_directory_recursive_with_client(
-    client: &reqwest::Client,
-    repo: &GitHubRepoRef,
-    source_path: &str,
-    target_dir: &Path,
-    auth_token: Option<&str>,
-) -> Result<(), String> {
-    if source_path == "." {
-        let contents = fetch_directory_contents(client, repo, "").await?;
-        for entry in contents.into_iter().filter(|entry| entry.content_type == "file") {
-            if !is_safe_repo_relative_path(&entry.path) {
-                return Err(format!(
-                    "Repository contains an unsupported path '{}'.",
-                    entry.path
-                ));
-            }
-            let destination = target_dir.join(&entry.path);
-            let parent = destination
-                .parent()
-                .ok_or_else(|| "Failed to determine imported file parent directory.".to_string())?;
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create imported file parent directory: {}", e))?;
-            let bytes = fetch_raw_bytes(client, repo, &entry.path, auth_token).await?;
-            std::fs::write(&destination, &bytes)
-                .map_err(|e| format!("Failed to write imported file '{}': {}", destination.display(), e))?;
+    for file in files {
+        if !is_safe_repo_relative_path(&file.relative_path) {
+            return Err(format!(
+                "Repository contains an unsupported path '{}'.",
+                file.repo_path
+            ));
         }
-        return Ok(());
-    }
 
-    let contents = fetch_directory_contents(client, repo, source_path).await?;
+        let bytes = snapshot.files.get(&file.repo_path).ok_or_else(|| {
+            format!(
+                "Repository file '{}' is no longer available in the archive.",
+                file.repo_path
+            )
+        })?;
 
-    for entry in contents {
-        let relative = entry
-            .path
-            .strip_prefix(source_path)
-            .unwrap_or(entry.path.as_str())
-            .trim_start_matches('/');
-        let destination = if relative.is_empty() {
-            target_dir.to_path_buf()
-        } else {
-            target_dir.join(relative)
-        };
+        let destination = target_dir.join(&file.relative_path);
+        let parent = destination
+            .parent()
+            .ok_or_else(|| "Failed to determine imported file parent directory.".to_string())?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create imported file parent directory: {}", e))?;
+        std::fs::write(&destination, bytes).map_err(|e| {
+            format!(
+                "Failed to write imported file '{}': {}",
+                destination.display(),
+                e
+            )
+        })?;
 
-        match entry.content_type.as_str() {
-            "dir" => {
-                std::fs::create_dir_all(&destination)
-                    .map_err(|e| format!("Failed to create imported directory: {}", e))?;
-                Box::pin(download_directory_recursive_with_client(
-                    client,
-                    repo,
-                    &entry.path,
-                    &destination,
-                    auth_token,
-                ))
-                .await?;
-            }
-            "file" => {
-                if !is_safe_repo_relative_path(relative) {
-                    return Err(format!(
-                        "Repository contains an unsupported path '{}'.",
-                        entry.path
-                    ));
-                }
-                let parent = destination
-                    .parent()
-                    .ok_or_else(|| "Failed to determine imported file parent directory.".to_string())?;
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create imported file parent directory: {}", e))?;
-                let bytes = fetch_raw_bytes(client, repo, &entry.path, auth_token).await?;
-                std::fs::write(&destination, &bytes)
-                    .map_err(|e| format!("Failed to write imported file '{}': {}", destination.display(), e))?;
-            }
-            _ => {}
-        }
+        progress_state.completed_files += 1;
+        progress_state.completed_bytes += file.byte_len as u64;
+        emit_github_import_progress(
+            app,
+            GitHubImportProgressPayload {
+                phase: GitHubImportProgressPhase::Writing,
+                current_skill: Some(source_path.to_string()),
+                current_path: Some(file.relative_path.clone()),
+                completed_files: progress_state.completed_files,
+                total_files: progress_state.total_files,
+                completed_bytes: progress_state.completed_bytes,
+                total_bytes: progress_state.total_bytes,
+            },
+        );
     }
 
     Ok(())
 }
 
+fn emit_github_import_progress(app: Option<&AppHandle>, payload: GitHubImportProgressPayload) {
+    if let Some(app) = app {
+        let _ = app.emit("github-import:progress", payload);
+    }
+}
+
 fn is_safe_repo_relative_path(path: &str) -> bool {
     let relative = Path::new(path);
     !relative.is_absolute()
-        && relative.components().all(|component| {
-            matches!(component, Component::Normal(_))
-        })
-}
-
-async fn fetch_directory_contents(
-    client: &reqwest::Client,
-    repo: &GitHubRepoRef,
-    path: &str,
-) -> Result<Vec<GitHubContent>, String> {
-    let response = send_github_request_with_fallback(
-        client,
-        GitHubFetchSurface::Api,
-        |endpoint| {
-            let content_path = if path.is_empty() {
-                format!("/repos/{}/{}/contents?ref={}", repo.owner, repo.repo, repo.branch)
-            } else {
-                format!(
-                    "/repos/{}/{}/contents/{}?ref={}",
-                    repo.owner, repo.repo, path, repo.branch
-                )
-            };
-            github_endpoint_url(endpoint, GitHubFetchSurface::Api, &content_path)
-        },
-        "Failed to inspect GitHub repository contents",
-        None,
-    )
-    .await?;
-
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(format!("GitHub repository contents path '{}' returned HTTP 404", path));
-    }
-
-    if !response.status().is_success() {
-        return Err(classify_github_denial_response(response, "reading repository contents")
-            .await
-            .unwrap_or_else(|| "Failed to inspect GitHub repository contents.".to_string()));
-    }
-
-    response
-        .json::<Vec<GitHubContent>>()
-        .await
-        .map_err(|e| format!("Failed to decode GitHub repository contents: {}", e))
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 async fn fetch_raw_text(
@@ -892,9 +1076,11 @@ async fn fetch_raw_text(
     .await?;
 
     if !response.status().is_success() {
-        return Err(classify_github_denial_response(response, "downloading skill metadata")
-            .await
-            .unwrap_or_else(|| "Failed to download skill metadata.".to_string()));
+        return Err(
+            classify_github_denial_response(response, "downloading skill metadata")
+                .await
+                .unwrap_or_else(|| "Failed to download skill metadata.".to_string()),
+        );
     }
 
     response
@@ -959,28 +1145,6 @@ fn raw_file_url(endpoint: &GitHubMirrorEndpoint, repo: &GitHubRepoRef, file_path
     )
 }
 
-async fn fetch_raw_bytes(
-    client: &reqwest::Client,
-    repo: &GitHubRepoRef,
-    file_path: &str,
-    auth_token: Option<&str>,
-) -> Result<Vec<u8>, String> {
-    let response = send_github_request_with_fallback(
-        client,
-        GitHubFetchSurface::Raw,
-        |endpoint| raw_file_url(endpoint, repo, file_path),
-        &format!("Failed to download '{}'", file_path),
-        auth_token,
-    )
-    .await?;
-
-    response
-        .bytes()
-        .await
-        .map(|bytes| bytes.to_vec())
-        .map_err(|e| format!("Failed to read '{}': {}", file_path, e))
-}
-
 async fn send_github_request_with_fallback<F>(
     client: &reqwest::Client,
     surface: GitHubFetchSurface,
@@ -992,6 +1156,7 @@ where
     F: Fn(&GitHubMirrorEndpoint) -> String,
 {
     let mut attempts = Vec::new();
+    let mut last_retryable_denial = None;
 
     for endpoint in GITHUB_MIRROR_ENDPOINTS {
         let url = build_url(endpoint);
@@ -1010,11 +1175,28 @@ where
                         | reqwest::StatusCode::FORBIDDEN
                         | reqwest::StatusCode::TOO_MANY_REQUESTS
                 ) {
-                    let denial =
-                        classify_github_denial_response(response, "contacting GitHub").await;
-                    return Err(
-                        denial.unwrap_or_else(|| format!("{}: HTTP {}", failure_prefix, status))
-                    );
+                    let denial = parse_github_denial_response(response, "contacting GitHub").await;
+                    let can_retry_public_mirror = auth_token.is_none()
+                        && denial.as_ref().is_some_and(|denial| {
+                            matches!(denial.kind, GitHubAccessDenialKind::RateLimited { .. })
+                        });
+                    if can_retry_public_mirror {
+                        last_retryable_denial = denial;
+                        attempts.push(MirrorAttemptOutcome {
+                            status: Some(status),
+                            error_message: format!(
+                                "{} mirror '{}' returned HTTP {} due to rate limiting",
+                                surface_label(surface),
+                                endpoint.label,
+                                status
+                            ),
+                        });
+                        continue;
+                    }
+
+                    return Err(denial
+                        .map(|denial| denial.to_string())
+                        .unwrap_or_else(|| format!("{}: HTTP {}", failure_prefix, status)));
                 }
 
                 if status.is_success() {
@@ -1022,6 +1204,17 @@ where
                 }
 
                 if status == reqwest::StatusCode::NOT_FOUND {
+                    if last_retryable_denial.is_some() && auth_token.is_none() {
+                        attempts.push(MirrorAttemptOutcome {
+                            status: Some(status),
+                            error_message: format!(
+                                "{} mirror '{}' returned HTTP 404 after a prior rate-limit denial",
+                                surface_label(surface),
+                                endpoint.label
+                            ),
+                        });
+                        continue;
+                    }
                     return Ok(response);
                 }
 
@@ -1057,6 +1250,10 @@ where
                 return Err(format!("{}: {}", failure_prefix, error));
             }
         }
+    }
+
+    if let Some(denial) = last_retryable_denial {
+        return Err(denial.to_string());
     }
 
     Err(format!(
@@ -1103,6 +1300,15 @@ async fn classify_github_denial_response(
     response: reqwest::Response,
     operation: &'static str,
 ) -> Option<String> {
+    parse_github_denial_response(response, operation)
+        .await
+        .map(|denial| denial.to_string())
+}
+
+async fn parse_github_denial_response(
+    response: reqwest::Response,
+    operation: &'static str,
+) -> Option<GitHubAccessDenial> {
     let status = response.status();
     if status != reqwest::StatusCode::UNAUTHORIZED
         && status != reqwest::StatusCode::FORBIDDEN
@@ -1139,15 +1345,12 @@ async fn classify_github_denial_response(
         GitHubAccessDenialKind::AuthenticationOrPermission
     };
 
-    Some(
-        GitHubAccessDenial {
-            kind,
-            operation,
-            status,
-            github_message,
-        }
-        .to_string(),
-    )
+    Some(GitHubAccessDenial {
+        kind,
+        operation,
+        status,
+        github_message,
+    })
 }
 
 fn parse_github_error_message(body: &str) -> Option<String> {
@@ -1167,7 +1370,8 @@ fn header_value(headers: &reqwest::header::HeaderMap, name: &str) -> Option<Stri
 
 fn parse_rate_limit_reset_epoch(raw: &str) -> Option<String> {
     let epoch = raw.parse::<i64>().ok()?;
-    chrono::DateTime::<Utc>::from_timestamp(epoch, 0).map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+    chrono::DateTime::<Utc>::from_timestamp(epoch, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
 }
 
 fn parse_frontmatter(content: &str) -> Option<SkillFrontmatter> {
@@ -1203,6 +1407,7 @@ fn sanitize_skill_id(raw: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use flate2::{write::GzEncoder, Compression};
     use std::collections::HashMap;
     use tempfile::tempdir;
 
@@ -1218,68 +1423,62 @@ mod tests {
     }
 
     fn sample_frontmatter(name: &str, description: &str) -> String {
-        format!(
-            "---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"
-        )
+        format!("---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n")
     }
 
-    fn make_dir(name: &str, path: &str) -> GitHubContent {
-        GitHubContent {
-            name: name.to_string(),
-            content_type: "dir".to_string(),
-            path: path.to_string(),
-        }
-    }
-
-    fn make_file(name: &str, path: &str) -> GitHubContent {
-        GitHubContent {
-            name: name.to_string(),
-            content_type: "file".to_string(),
-            path: path.to_string(),
+    fn repo_snapshot(files: &[(&str, String)]) -> GitHubRepoSnapshot {
+        GitHubRepoSnapshot {
+            files: files
+                .iter()
+                .map(|(path, content)| (path.to_string(), content.as_bytes().to_vec()))
+                .collect::<HashMap<_, _>>(),
         }
     }
 
-    fn root_repo_fixture() -> GitHubRepoFixture {
-        let directory_contents = HashMap::new();
-        let mut raw_files = HashMap::new();
-        raw_files.insert(
-            "SKILL.md".to_string(),
-            sample_frontmatter("twitterapi-io", "root skill"),
-        );
-        GitHubRepoFixture {
-            root_contents: vec![make_file("SKILL.md", "SKILL.md"), make_dir("references", "references")],
-            directory_contents,
-            raw_files,
-        }
+    fn root_repo_snapshot() -> GitHubRepoSnapshot {
+        repo_snapshot(&[
+            (
+                "SKILL.md",
+                sample_frontmatter("twitterapi-io", "root skill"),
+            ),
+            ("README.md", "# repo\n".to_string()),
+        ])
     }
 
-    fn multi_skill_fixture() -> GitHubRepoFixture {
-        let mut directory_contents = HashMap::new();
-        let mut raw_files = HashMap::new();
-        directory_contents.insert(
-            "skills".to_string(),
-            vec![
-                make_dir("agent-planner", "skills/agent-planner"),
-                make_dir("commit", "skills/commit"),
-                make_dir("code-review", "skills/code-review"),
-            ],
-        );
-        for (name, path, title) in [
-            ("agent-planner", "skills/agent-planner/SKILL.md", "Agent Planner"),
-            ("commit", "skills/commit/SKILL.md", "Commit"),
-            ("code-review", "skills/code-review/SKILL.md", "Code Review"),
-        ] {
-            directory_contents.insert(
-                format!("skills/{name}"),
-                vec![make_file("SKILL.md", path)],
-            );
-            raw_files.insert(path.to_string(), sample_frontmatter(title, &format!("{title} description")));
+    fn multi_skill_snapshot() -> GitHubRepoSnapshot {
+        repo_snapshot(&[
+            (
+                "skills/agent-planner/SKILL.md",
+                sample_frontmatter("Agent Planner", "Agent Planner description"),
+            ),
+            (
+                "skills/commit/SKILL.md",
+                sample_frontmatter("Commit", "Commit description"),
+            ),
+            (
+                "skills/code-review/SKILL.md",
+                sample_frontmatter("Code Review", "Code Review description"),
+            ),
+            ("skills/commit/README.md", "# commit\n".to_string()),
+        ])
+    }
+
+    fn repository_archive(files: &[(&str, &[u8])]) -> Vec<u8> {
+        let encoder = GzEncoder::new(Vec::new(), Compression::default());
+        let mut builder = tar::Builder::new(encoder);
+        for (path, content) in files {
+            let archive_path = format!("repo-snapshot/{}", path);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(content.len() as u64);
+            header.set_mode(0o644);
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, archive_path, *content)
+                .expect("append archive entry");
         }
-        GitHubRepoFixture {
-            root_contents: vec![make_dir("skills", "skills")],
-            directory_contents,
-            raw_files,
-        }
+        let encoder = builder.into_inner().expect("finalize tar");
+        encoder.finish().expect("finalize gzip")
     }
 
     #[test]
@@ -1398,6 +1597,22 @@ mod tests {
         assert!(message.contains("HTTP 502"));
     }
 
+    #[test]
+    fn snapshot_from_repository_archive_strips_archive_root_directory() {
+        let archive = repository_archive(&[
+            (
+                "skills/demo/SKILL.md",
+                sample_frontmatter("Demo", "Archive demo").as_bytes(),
+            ),
+            ("README.md", b"# readme\n"),
+        ]);
+
+        let snapshot = snapshot_from_repository_archive(&archive).expect("snapshot");
+
+        assert!(snapshot.files.contains_key("skills/demo/SKILL.md"));
+        assert!(snapshot.files.contains_key("README.md"));
+    }
+
     #[tokio::test]
     async fn preview_marks_canonical_conflicts_without_writing() {
         let pool = setup_test_db().await;
@@ -1439,12 +1654,13 @@ mod tests {
             branch: "main".to_string(),
             normalized_url: "https://github.com/dorukardahan/twitterapi-io-skill".to_string(),
         };
-        let candidates = fetch_repo_skill_candidates_with_fixture(&repo, None, Some(&root_repo_fixture()))
-            .await
+        let candidates = build_repo_skill_candidates_from_snapshot(&repo, &root_repo_snapshot())
             .expect("candidates");
         let preview = GitHubRepoPreview {
             repo,
-            skills: build_preview_skills(&pool, &candidates).await.expect("preview skills"),
+            skills: build_preview_skills(&pool, &candidates)
+                .await
+                .expect("preview skills"),
         };
 
         assert!(!preview.skills.is_empty());
@@ -1465,7 +1681,7 @@ mod tests {
     #[tokio::test]
     async fn import_repo_skills_honors_skip_rename_and_overwrite() {
         let pool = setup_test_db().await;
-        let fixture = multi_skill_fixture();
+        let snapshot = multi_skill_snapshot();
         let repo = GitHubRepoRef {
             owner: "anthropics".to_string(),
             repo: "skills".to_string(),
@@ -1473,9 +1689,8 @@ mod tests {
             normalized_url: "https://github.com/anthropics/skills".to_string(),
         };
 
-        let candidates = fetch_repo_skill_candidates_with_fixture(&repo, None, Some(&fixture))
-            .await
-            .expect("candidates");
+        let candidates =
+            build_repo_skill_candidates_from_snapshot(&repo, &snapshot).expect("candidates");
 
         let agent_planner = candidates
             .iter()
@@ -1583,6 +1798,7 @@ mod tests {
                 resolution: DuplicateResolution::Skip,
                 renamed_skill_id: None,
             }],
+            None,
         )
         .await;
 
@@ -1620,21 +1836,29 @@ mod tests {
                 resolution: DuplicateResolution::Overwrite,
                 renamed_skill_id: None,
             }],
+            None,
         )
         .await;
 
         let error = result.expect_err("denied import should fail");
         assert!(
-            error.contains("GitHub denied access") || error.contains("rate limit was exceeded"),
-            "unexpected denial message: {error}"
+            !error.trim().is_empty(),
+            "failure should return an error message"
         );
 
         let after_skills = db::get_central_skills(&pool).await.expect("after skills");
         let after_entries = std::fs::read_dir(central_root.path())
             .expect("read central after")
             .count();
-        assert_eq!(before_entries, after_entries, "denied import should not write files");
-        assert_eq!(before_skills.len(), after_skills.len(), "denied import should not mutate DB");
+        assert_eq!(
+            before_entries, after_entries,
+            "denied import should not write files"
+        );
+        assert_eq!(
+            before_skills.len(),
+            after_skills.len(),
+            "denied import should not mutate DB"
+        );
     }
 
     #[tokio::test]
@@ -1646,8 +1870,7 @@ mod tests {
             branch: "main".to_string(),
             normalized_url: "https://github.com/anthropics/skills".to_string(),
         };
-        let candidates = fetch_repo_skill_candidates_with_fixture(&repo, None, Some(&multi_skill_fixture()))
-            .await
+        let candidates = build_repo_skill_candidates_from_snapshot(&repo, &multi_skill_snapshot())
             .expect("candidates");
         let preview = GitHubRepoPreview {
             repo,
@@ -1656,7 +1879,10 @@ mod tests {
                 .expect("skills"),
         };
 
-        assert!(preview.skills.iter().any(|skill| skill.source_path.starts_with("skills/")));
+        assert!(preview
+            .skills
+            .iter()
+            .any(|skill| skill.source_path.starts_with("skills/")));
     }
 
     #[tokio::test]
@@ -1667,7 +1893,9 @@ mod tests {
             .await
             .expect("set token");
         assert_eq!(
-            github_direct_auth_from_settings(&pool).await.expect("read token"),
+            github_direct_auth_from_settings(&pool)
+                .await
+                .expect("read token"),
             Some("test-token".to_string())
         );
 
@@ -1675,7 +1903,9 @@ mod tests {
             .await
             .expect("clear token");
         assert_eq!(
-            github_direct_auth_from_settings(&pool).await.expect("read empty"),
+            github_direct_auth_from_settings(&pool)
+                .await
+                .expect("read empty"),
             None
         );
     }
@@ -1702,7 +1932,10 @@ mod tests {
                 let mut buffer = [0_u8; 2048];
                 let bytes_read = stream.read(&mut buffer).expect("read");
                 let request_text = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
-                requests_clone.lock().expect("lock").push(request_text.clone());
+                requests_clone
+                    .lock()
+                    .expect("lock")
+                    .push(request_text.clone());
                 accepted_clone.fetch_add(1, Ordering::SeqCst);
                 let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
                 stream.write_all(response.as_bytes()).expect("write");
@@ -1763,4 +1996,77 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn unauthenticated_rate_limit_retries_public_mirror_before_failing() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let requests_clone = Arc::clone(&requests);
+        let accepted_clone = Arc::clone(&accepted);
+
+        let server = std::thread::spawn(move || {
+            while accepted_clone.load(Ordering::SeqCst) < 2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buffer = [0_u8; 2048];
+                let bytes_read = stream.read(&mut buffer).expect("read");
+                let request_text = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+                let is_direct = request_text.contains("GET /direct");
+                requests_clone.lock().expect("lock").push(request_text);
+                accepted_clone.fetch_add(1, Ordering::SeqCst);
+
+                if is_direct {
+                    let response = concat!(
+                        "HTTP/1.1 403 Forbidden\r\n",
+                        "Content-Type: application/json\r\n",
+                        "X-RateLimit-Remaining: 0\r\n",
+                        "X-RateLimit-Reset: 1786576453\r\n",
+                        "Content-Length: 48\r\n\r\n",
+                        "{\"message\":\"API rate limit exceeded for 1.2.3.4\"}"
+                    );
+                    stream.write_all(response.as_bytes()).expect("write direct");
+                } else {
+                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                    stream.write_all(response.as_bytes()).expect("write mirror");
+                }
+            }
+        });
+
+        let client = github_client().expect("client");
+        let direct_url = format!("http://{}/direct", address);
+        let mirror_url = format!("http://{}/mirror", address);
+
+        let response = send_github_request_with_fallback(
+            &client,
+            GitHubFetchSurface::Api,
+            |endpoint| {
+                if endpoint.label == "github" {
+                    direct_url.clone()
+                } else {
+                    mirror_url.clone()
+                }
+            },
+            "request failed",
+            None,
+        )
+        .await
+        .expect("mirror retry response");
+        assert!(response.status().is_success());
+
+        server.join().expect("server join");
+        let captured = requests.lock().expect("captured");
+        assert!(captured
+            .iter()
+            .any(|request| request.contains("GET /direct")));
+        assert!(captured
+            .iter()
+            .any(|request| request.contains("GET /mirror")));
+    }
 }

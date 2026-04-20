@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
-use crate::db::{self, DbPool, SkillForAgent};
+use crate::db::{self, Collection, DbPool, SkillForAgent};
 use crate::AppState;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,6 +50,8 @@ pub struct SkillDetail {
     pub scanned_at: String,
     /// All installation records for this skill across agents.
     pub installations: Vec<SkillInstallationDetail>,
+    /// Collections this skill currently belongs to.
+    pub collections: Vec<Collection>,
 }
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
@@ -82,18 +84,13 @@ pub async fn get_skills_by_agent(
 /// `linked_agents` array listing every agent that has an installation record
 /// for that skill (regardless of whether the link type is symlink or copy).
 #[tauri::command]
-pub async fn get_central_skills(
-    state: State<'_, AppState>,
-) -> Result<Vec<SkillWithLinks>, String> {
+pub async fn get_central_skills(state: State<'_, AppState>) -> Result<Vec<SkillWithLinks>, String> {
     let skills = db::get_central_skills(&state.db).await?;
 
     let mut result = Vec::with_capacity(skills.len());
     for skill in skills {
         let installations = db::get_skill_installations(&state.db, &skill.id).await?;
-        let linked_agents: Vec<String> = installations
-            .into_iter()
-            .map(|i| i.agent_id)
-            .collect();
+        let linked_agents: Vec<String> = installations.into_iter().map(|i| i.agent_id).collect();
 
         result.push(SkillWithLinks {
             id: skill.id,
@@ -135,6 +132,7 @@ pub async fn get_skill_detail(
             installed_at: i.created_at,
         })
         .collect();
+    let collections = db::get_skill_collections(&state.db, &skill_id).await?;
 
     Ok(SkillDetail {
         id: skill.id,
@@ -146,6 +144,7 @@ pub async fn get_skill_detail(
         source: skill.source,
         scanned_at: skill.scanned_at,
         installations,
+        collections,
     })
 }
 
@@ -161,6 +160,48 @@ pub async fn read_skill_content(
 
     std::fs::read_to_string(&skill.file_path)
         .map_err(|e| format!("Failed to read '{}': {}", skill.file_path, e))
+}
+
+#[tauri::command]
+pub async fn read_file_by_path(path: String) -> Result<String, String> {
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read '{}': {}", path, e))
+}
+
+#[tauri::command]
+pub async fn open_in_file_manager(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    open_in_file_manager_impl(&path)
+}
+
+fn open_in_file_manager_impl(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn()
+            .map_err(|e| format!("Failed to open: {}", e))?;
+    }
+
+    Ok(())
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -300,7 +341,11 @@ mod tests {
         db::upsert_skill(&pool, &non_central).await.unwrap();
 
         let skills_with_links = get_central_skills_impl(&pool).await.unwrap();
-        assert_eq!(skills_with_links.len(), 1, "only central skills should be returned");
+        assert_eq!(
+            skills_with_links.len(),
+            1,
+            "only central skills should be returned"
+        );
         assert_eq!(skills_with_links[0].id, "c-skill");
     }
 
@@ -333,7 +378,36 @@ mod tests {
         assert_eq!(detail.installations.len(), 1);
         assert_eq!(detail.installations[0].agent_id, "claude-code");
         // installed_at should be populated from created_at
-        assert!(!detail.installations[0].installed_at.is_empty(), "installed_at must be set");
+        assert!(
+            !detail.installations[0].installed_at.is_empty(),
+            "installed_at must be set"
+        );
+        assert!(detail.collections.is_empty(), "skill should have no collections by default");
+    }
+
+    #[tokio::test]
+    async fn test_get_skill_detail_returns_collections() {
+        let pool = setup_test_db().await;
+
+        let skill = make_skill("detail-skill", "Detail Skill", false);
+        db::upsert_skill(&pool, &skill).await.unwrap();
+
+        let alpha = db::create_collection(&pool, "Alpha", Some("First collection"))
+            .await
+            .unwrap();
+        let beta = db::create_collection(&pool, "Beta", None).await.unwrap();
+
+        db::add_skill_to_collection(&pool, &alpha.id, "detail-skill")
+            .await
+            .unwrap();
+        db::add_skill_to_collection(&pool, &beta.id, "detail-skill")
+            .await
+            .unwrap();
+
+        let detail = get_skill_detail_impl(&pool, "detail-skill").await.unwrap();
+        let collection_names: Vec<&str> = detail.collections.iter().map(|c| c.name.as_str()).collect();
+
+        assert_eq!(collection_names, vec!["Alpha", "Beta"]);
     }
 
     #[tokio::test]
@@ -437,6 +511,7 @@ mod tests {
                 installed_at: i.created_at,
             })
             .collect();
+        let collections = db::get_skill_collections(pool, skill_id).await?;
         Ok(SkillDetail {
             id: skill.id,
             name: skill.name,
@@ -447,6 +522,7 @@ mod tests {
             source: skill.source,
             scanned_at: skill.scanned_at,
             installations,
+            collections,
         })
     }
 
@@ -485,12 +561,17 @@ mod tests {
         .await
         .unwrap();
 
-        let skills = get_skills_by_agent_impl(&pool, "claude-code").await.unwrap();
+        let skills = get_skills_by_agent_impl(&pool, "claude-code")
+            .await
+            .unwrap();
         assert_eq!(skills.len(), 1, "should find one skill for claude-code");
 
         let s = &skills[0];
         assert_eq!(s.id, "meta-skill");
-        assert_eq!(s.link_type, "symlink", "link_type must come from installation record");
+        assert_eq!(
+            s.link_type, "symlink",
+            "link_type must come from installation record"
+        );
         assert_eq!(
             s.dir_path, "/tmp/claude/meta-skill",
             "dir_path must be installed_path from installation record"
@@ -506,7 +587,10 @@ mod tests {
     async fn test_get_skills_by_agent_impl_empty_for_unknown_agent() {
         let pool = setup_test_db().await;
         let skills = get_skills_by_agent_impl(&pool, "nobody").await.unwrap();
-        assert!(skills.is_empty(), "no skills for an agent with no installations");
+        assert!(
+            skills.is_empty(),
+            "no skills for an agent with no installations"
+        );
     }
 
     #[tokio::test]
@@ -533,6 +617,38 @@ mod tests {
         let skills = get_skills_by_agent_impl(&pool, "cursor").await.unwrap();
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].link_type, "copy");
-        assert!(skills[0].symlink_target.is_none(), "copy skills have no symlink target");
+        assert!(
+            skills[0].symlink_target.is_none(),
+            "copy skills have no symlink target"
+        );
+    }
+
+    // ── read_file_by_path ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_read_file_by_path_success() {
+        let tmp = TempDir::new().unwrap();
+        let file_path = tmp.path().join("test-skill.md");
+        let content = "---\nname: Test\n---\n\n# Test Skill";
+        fs::write(&file_path, content).unwrap();
+
+        let result = read_file_by_path(file_path.to_string_lossy().into_owned()).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), content);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_by_path_not_found() {
+        let result = read_file_by_path("/nonexistent/file.md".to_string()).await;
+        assert!(result.is_err());
+    }
+
+    // ── open_in_file_manager ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_open_in_file_manager_nonexistent_path() {
+        let result =
+            open_in_file_manager("/nonexistent/path/that/does/not/exist".to_string()).await;
+        assert!(result.is_err());
     }
 }

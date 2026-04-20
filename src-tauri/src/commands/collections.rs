@@ -102,10 +102,7 @@ pub async fn remove_skill_from_collection_impl(
 }
 
 /// Delete a collection and all its skill memberships.
-pub async fn delete_collection_impl(
-    pool: &DbPool,
-    collection_id: &str,
-) -> Result<(), String> {
+pub async fn delete_collection_impl(pool: &DbPool, collection_id: &str) -> Result<(), String> {
     // Verify the collection exists before trying to delete it.
     db::get_collection_by_id(pool, collection_id)
         .await?
@@ -172,10 +169,7 @@ pub async fn batch_install_collection_impl(
 }
 
 /// Export a collection to a JSON string matching the spec in docs/desktop-design.md.
-pub async fn export_collection_impl(
-    pool: &DbPool,
-    collection_id: &str,
-) -> Result<String, String> {
+pub async fn export_collection_impl(pool: &DbPool, collection_id: &str) -> Result<String, String> {
     let collection = db::get_collection_by_id(pool, collection_id)
         .await?
         .ok_or_else(|| format!("Collection '{}' not found", collection_id))?;
@@ -202,10 +196,7 @@ pub async fn export_collection_impl(
 /// silently skipped (they may not yet be scanned on this machine).
 ///
 /// Returns the newly created collection.
-pub async fn import_collection_impl(
-    pool: &DbPool,
-    json: &str,
-) -> Result<Collection, String> {
+pub async fn import_collection_impl(pool: &DbPool, json: &str) -> Result<Collection, String> {
     let export: CollectionExport =
         serde_json::from_str(json).map_err(|e| format!("Invalid collection JSON: {}", e))?;
 
@@ -361,7 +352,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_collection_returns_collection() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "My Collection", Some("A test")).await.unwrap();
+        let col = create_collection_impl(&pool, "My Collection", Some("A test"))
+            .await
+            .unwrap();
 
         assert_eq!(col.name, "My Collection");
         assert_eq!(col.description.as_deref(), Some("A test"));
@@ -373,7 +366,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_collection_without_description() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "No Desc", None).await.unwrap();
+        let col = create_collection_impl(&pool, "No Desc", None)
+            .await
+            .unwrap();
         assert_eq!(col.name, "No Desc");
         assert!(col.description.is_none());
     }
@@ -394,7 +389,9 @@ mod tests {
     async fn test_get_collections_returns_all() {
         let pool = setup_test_db().await;
         create_collection_impl(&pool, "Col A", None).await.unwrap();
-        create_collection_impl(&pool, "Col B", Some("Desc")).await.unwrap();
+        create_collection_impl(&pool, "Col B", Some("Desc"))
+            .await
+            .unwrap();
 
         let all = get_collections_impl(&pool).await.unwrap();
         assert_eq!(all.len(), 2, "should return both collections");
@@ -421,9 +418,15 @@ mod tests {
         db::upsert_skill(&pool, &skill_a).await.unwrap();
         db::upsert_skill(&pool, &skill_b).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Detail Col", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "skill-a").await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "skill-b").await.unwrap();
+        let col = create_collection_impl(&pool, "Detail Col", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "skill-a")
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "skill-b")
+            .await
+            .unwrap();
 
         let detail = get_collection_detail_impl(&pool, &col.id).await.unwrap();
         assert_eq!(detail.id, col.id);
@@ -437,7 +440,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_collection_detail_empty_skills() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "Empty Col", None).await.unwrap();
+        let col = create_collection_impl(&pool, "Empty Col", None)
+            .await
+            .unwrap();
         let detail = get_collection_detail_impl(&pool, &col.id).await.unwrap();
         assert!(detail.skills.is_empty());
     }
@@ -458,8 +463,12 @@ mod tests {
         let skill = make_skill("add-skill");
         db::upsert_skill(&pool, &skill).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Add Test", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "add-skill").await.unwrap();
+        let col = create_collection_impl(&pool, "Add Test", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "add-skill")
+            .await
+            .unwrap();
 
         let detail = get_collection_detail_impl(&pool, &col.id).await.unwrap();
         assert_eq!(detail.skills.len(), 1);
@@ -473,12 +482,22 @@ mod tests {
         let skill = make_skill("idem-skill");
         db::upsert_skill(&pool, &skill).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Idem Col", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "idem-skill").await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "idem-skill").await.unwrap();
+        let col = create_collection_impl(&pool, "Idem Col", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "idem-skill")
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "idem-skill")
+            .await
+            .unwrap();
 
         let detail = get_collection_detail_impl(&pool, &col.id).await.unwrap();
-        assert_eq!(detail.skills.len(), 1, "duplicate add should not create duplicate entry");
+        assert_eq!(
+            detail.skills.len(),
+            1,
+            "duplicate add should not create duplicate entry"
+        );
     }
 
     #[tokio::test]
@@ -497,10 +516,16 @@ mod tests {
         let skill = make_skill("remove-skill");
         db::upsert_skill(&pool, &skill).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Remove Test", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "remove-skill").await.unwrap();
+        let col = create_collection_impl(&pool, "Remove Test", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "remove-skill")
+            .await
+            .unwrap();
 
-        remove_skill_from_collection_impl(&pool, &col.id, "remove-skill").await.unwrap();
+        remove_skill_from_collection_impl(&pool, &col.id, "remove-skill")
+            .await
+            .unwrap();
 
         let detail = get_collection_detail_impl(&pool, &col.id).await.unwrap();
         assert!(detail.skills.is_empty(), "skill should be removed");
@@ -518,7 +543,9 @@ mod tests {
     #[tokio::test]
     async fn test_delete_collection_removes_it() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "To Delete", None).await.unwrap();
+        let col = create_collection_impl(&pool, "To Delete", None)
+            .await
+            .unwrap();
 
         delete_collection_impl(&pool, &col.id).await.unwrap();
 
@@ -533,20 +560,26 @@ mod tests {
         let skill = make_skill("cascade-skill");
         db::upsert_skill(&pool, &skill).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Cascade Col", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "cascade-skill").await.unwrap();
+        let col = create_collection_impl(&pool, "Cascade Col", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "cascade-skill")
+            .await
+            .unwrap();
 
         delete_collection_impl(&pool, &col.id).await.unwrap();
 
         // The collection_skills rows should also be gone.
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM collection_skills WHERE collection_id = ?",
-        )
-        .bind(&col.id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(count, 0, "collection_skills should be removed on cascade delete");
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM collection_skills WHERE collection_id = ?")
+                .bind(&col.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, 0,
+            "collection_skills should be removed on cascade delete"
+        );
     }
 
     #[tokio::test]
@@ -563,8 +596,12 @@ mod tests {
         let skill = make_skill("safe-skill");
         db::upsert_skill(&pool, &skill).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Safe Delete", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "safe-skill").await.unwrap();
+        let col = create_collection_impl(&pool, "Safe Delete", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "safe-skill")
+            .await
+            .unwrap();
 
         delete_collection_impl(&pool, &col.id).await.unwrap();
 
@@ -578,9 +615,13 @@ mod tests {
     #[tokio::test]
     async fn test_update_collection_name_and_description() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "Old Name", None).await.unwrap();
+        let col = create_collection_impl(&pool, "Old Name", None)
+            .await
+            .unwrap();
 
-        let updated = update_collection_impl(&pool, &col.id, "New Name", Some("New Desc")).await.unwrap();
+        let updated = update_collection_impl(&pool, &col.id, "New Name", Some("New Desc"))
+            .await
+            .unwrap();
         assert_eq!(updated.name, "New Name");
         assert_eq!(updated.description.as_deref(), Some("New Desc"));
     }
@@ -588,7 +629,9 @@ mod tests {
     #[tokio::test]
     async fn test_update_collection_rejects_empty_name() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "Valid Name", None).await.unwrap();
+        let col = create_collection_impl(&pool, "Valid Name", None)
+            .await
+            .unwrap();
 
         let result = update_collection_impl(&pool, &col.id, "", None).await;
         assert!(result.is_err(), "empty name should be rejected on update");
@@ -612,9 +655,15 @@ mod tests {
         db::upsert_skill(&pool, &skill_a).await.unwrap();
         db::upsert_skill(&pool, &skill_b).await.unwrap();
 
-        let col = create_collection_impl(&pool, "Export Col", Some("Export desc")).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "export-skill-a").await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "export-skill-b").await.unwrap();
+        let col = create_collection_impl(&pool, "Export Col", Some("Export desc"))
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "export-skill-a")
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "export-skill-b")
+            .await
+            .unwrap();
 
         let json_str = export_collection_impl(&pool, &col.id).await.unwrap();
         let parsed: CollectionExport = serde_json::from_str(&json_str).unwrap();
@@ -632,7 +681,9 @@ mod tests {
     #[tokio::test]
     async fn test_export_collection_empty_skills() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "Empty Export", None).await.unwrap();
+        let col = create_collection_impl(&pool, "Empty Export", None)
+            .await
+            .unwrap();
 
         let json_str = export_collection_impl(&pool, &col.id).await.unwrap();
         let parsed: CollectionExport = serde_json::from_str(&json_str).unwrap();
@@ -643,7 +694,9 @@ mod tests {
     #[tokio::test]
     async fn test_export_collection_json_has_required_fields() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "Field Check", None).await.unwrap();
+        let col = create_collection_impl(&pool, "Field Check", None)
+            .await
+            .unwrap();
 
         let json_str = export_collection_impl(&pool, &col.id).await.unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&json_str).unwrap();
@@ -738,7 +791,10 @@ mod tests {
         .unwrap();
 
         let result = import_collection_impl(&pool, &json).await;
-        assert!(result.is_err(), "empty name in import JSON should be rejected");
+        assert!(
+            result.is_err(),
+            "empty name in import JSON should be rejected"
+        );
     }
 
     #[tokio::test]
@@ -749,14 +805,20 @@ mod tests {
         db::upsert_skill(&pool, &skill).await.unwrap();
 
         // Export from original collection.
-        let original = create_collection_impl(&pool, "Roundtrip", Some("desc")).await.unwrap();
-        add_skill_to_collection_impl(&pool, &original.id, "roundtrip-skill").await.unwrap();
+        let original = create_collection_impl(&pool, "Roundtrip", Some("desc"))
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &original.id, "roundtrip-skill")
+            .await
+            .unwrap();
 
         let json = export_collection_impl(&pool, &original.id).await.unwrap();
 
         // Import from that JSON.
         let imported = import_collection_impl(&pool, &json).await.unwrap();
-        let detail = get_collection_detail_impl(&pool, &imported.id).await.unwrap();
+        let detail = get_collection_detail_impl(&pool, &imported.id)
+            .await
+            .unwrap();
 
         assert_eq!(detail.name, "Roundtrip");
         assert_eq!(detail.skills.len(), 1);
@@ -812,17 +874,19 @@ mod tests {
         }
 
         // Create a collection with both skills.
-        let col = create_collection_impl(&pool, "Batch Install Col", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "batch-col-skill-1").await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "batch-col-skill-2").await.unwrap();
+        let col = create_collection_impl(&pool, "Batch Install Col", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "batch-col-skill-1")
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "batch-col-skill-2")
+            .await
+            .unwrap();
 
-        let result = batch_install_collection_impl(
-            &pool,
-            &col.id,
-            &["claude-code".to_string()],
-        )
-        .await
-        .unwrap();
+        let result = batch_install_collection_impl(&pool, &col.id, &["claude-code".to_string()])
+            .await
+            .unwrap();
 
         assert_eq!(result.succeeded.len(), 2, "both skills should succeed");
         assert!(result.failed.is_empty(), "no failures expected");
@@ -877,9 +941,7 @@ mod tests {
                     .join("SKILL.md")
                     .to_string_lossy()
                     .into_owned(),
-                canonical_path: Some(
-                    central_dir.join(skill_id).to_string_lossy().into_owned(),
-                ),
+                canonical_path: Some(central_dir.join(skill_id).to_string_lossy().into_owned()),
                 is_central: true,
                 source: None,
                 content: None,
@@ -888,17 +950,19 @@ mod tests {
             db::upsert_skill(&pool, &skill).await.unwrap();
         }
 
-        let col = create_collection_impl(&pool, "Partial Batch", None).await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "good-skill").await.unwrap();
-        add_skill_to_collection_impl(&pool, &col.id, "missing-on-disk").await.unwrap();
+        let col = create_collection_impl(&pool, "Partial Batch", None)
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "good-skill")
+            .await
+            .unwrap();
+        add_skill_to_collection_impl(&pool, &col.id, "missing-on-disk")
+            .await
+            .unwrap();
 
-        let result = batch_install_collection_impl(
-            &pool,
-            &col.id,
-            &["claude-code".to_string()],
-        )
-        .await
-        .unwrap();
+        let result = batch_install_collection_impl(&pool, &col.id, &["claude-code".to_string()])
+            .await
+            .unwrap();
 
         assert_eq!(result.succeeded.len(), 1, "good skill should succeed");
         assert_eq!(result.failed.len(), 1, "missing skill should fail");
@@ -919,15 +983,13 @@ mod tests {
     #[tokio::test]
     async fn test_batch_install_empty_collection_succeeds() {
         let pool = setup_test_db().await;
-        let col = create_collection_impl(&pool, "Empty Batch", None).await.unwrap();
+        let col = create_collection_impl(&pool, "Empty Batch", None)
+            .await
+            .unwrap();
 
-        let result = batch_install_collection_impl(
-            &pool,
-            &col.id,
-            &["claude-code".to_string()],
-        )
-        .await
-        .unwrap();
+        let result = batch_install_collection_impl(&pool, &col.id, &["claude-code".to_string()])
+            .await
+            .unwrap();
 
         assert!(result.succeeded.is_empty());
         assert!(result.failed.is_empty());

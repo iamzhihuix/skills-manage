@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
   CheckCircle2,
@@ -13,9 +13,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
 import { SkillDetailDrawer } from "@/components/skill/SkillDetailDrawer";
+import { SkillFrontmatterCard } from "@/components/skill/SkillFrontmatterCard";
 import { Button } from "@/components/ui/button";
+import { parseFrontmatter } from "@/lib/frontmatter";
+import { setupExplanationStreamListeners } from "@/lib/explanationStream";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import i18n from "@/i18n";
 
 export interface MarketplaceSkillDetail {
   id: string;
@@ -53,7 +57,15 @@ export function MarketplaceSkillDetailDrawer({
   const [viewMode, setViewMode] = useState<ViewMode>("markdown");
   const [explanation, setExplanation] = useState<string | null>(null);
   const [isExplaining, setIsExplaining] = useState(false);
+  const [explanationError, setExplanationError] = useState<string | null>(null);
+  const explanationRequestRef = useRef(0);
+  const explanationUnlistenRef = useRef<(() => void) | null>(null);
   const browserMode = !isTauriRuntime();
+
+  const cleanupExplanation = useCallback(() => {
+    explanationUnlistenRef.current?.();
+    explanationUnlistenRef.current = null;
+  }, []);
 
   const fetchContent = useCallback(async () => {
     if (!open || !skill?.downloadUrl) {
@@ -78,6 +90,7 @@ export function MarketplaceSkillDetailDrawer({
     if (open && skill?.downloadUrl) {
       setContent("");
       setExplanation(null);
+      setExplanationError(null);
       setViewMode("markdown");
       void fetchContent();
     }
@@ -85,26 +98,64 @@ export function MarketplaceSkillDetailDrawer({
 
   useEffect(() => {
     if (!open) {
+      cleanupExplanation();
       onAfterCloseFocus?.();
     }
-  }, [open, onAfterCloseFocus]);
+  }, [open, onAfterCloseFocus, cleanupExplanation]);
+
+  useEffect(() => cleanupExplanation, [cleanupExplanation]);
 
   const displayContent = useMemo(() => {
-    if (!content) return "";
-    const match = content.match(/^---\s*\n[\s\S]*?\n---\s*\n?([\s\S]*)$/);
-    return match ? match[1].trim() : content;
+    if (!content) return { frontmatterRaw: "", frontmatterData: {}, body: "" };
+    return parseFrontmatter(content);
   }, [content]);
 
   async function handleExplain() {
-    if (!content || browserMode) return;
+    if (!content || browserMode || !skill) return;
+    explanationRequestRef.current += 1;
+    const requestId = explanationRequestRef.current;
+    const skillId = `marketplace-preview:${skill.id}`;
+    cleanupExplanation();
     setIsExplaining(true);
     setExplanation(null);
+    setExplanationError(null);
     try {
-      const result = await invoke<string>("explain_skill", { content });
-      setExplanation(result);
+      explanationUnlistenRef.current = await setupExplanationStreamListeners(skillId, {
+        onChunk: (chunkText) => {
+          if (requestId !== explanationRequestRef.current) return;
+          setIsExplaining(false);
+          setExplanation((prev) => `${prev ?? ""}${chunkText}`);
+        },
+        onComplete: (payload) => {
+          if (requestId !== explanationRequestRef.current) return;
+          cleanupExplanation();
+          const nextExplanation = payload.explanation ?? "";
+          if (nextExplanation.trim()) {
+            setExplanation((prev) => payload.explanation ?? prev);
+            setExplanationError(null);
+          } else {
+            setExplanation(null);
+            setExplanationError("AI explanation returned no content.");
+          }
+          setIsExplaining(false);
+        },
+        onError: (payload) => {
+          if (requestId !== explanationRequestRef.current) return;
+          cleanupExplanation();
+          setExplanation(null);
+          setExplanationError(payload.error ?? "Unknown explanation error");
+          setIsExplaining(false);
+        },
+      });
+      await invoke("refresh_skill_explanation", {
+        skillId,
+        content,
+        lang: i18n.language,
+      });
     } catch (err) {
-      setExplanation(`Error: ${String(err)}`);
-    } finally {
+      cleanupExplanation();
+      setExplanation(null);
+      setExplanationError(String(err));
       setIsExplaining(false);
     }
   }
@@ -229,10 +280,16 @@ export function MarketplaceSkillDetailDrawer({
                     {t("common.loading")}
                   </div>
                 ) : viewMode === "markdown" ? (
-                  <div className="prose prose-sm dark:prose-invert max-w-none rounded-xl border border-border/70 bg-background/60 p-4 markdown-body">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {displayContent}
-                    </ReactMarkdown>
+                  <div className="space-y-4">
+                    <SkillFrontmatterCard
+                      data={displayContent.frontmatterData}
+                      raw={displayContent.frontmatterRaw}
+                    />
+                    <div className="prose prose-sm dark:prose-invert max-w-none rounded-xl border border-border/70 bg-background/60 p-4 markdown-body">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {displayContent.body}
+                      </ReactMarkdown>
+                    </div>
                   </div>
                 ) : (
                   <pre className="overflow-auto whitespace-pre-wrap rounded-xl border border-border/70 bg-muted/30 p-4 text-xs">
@@ -240,7 +297,7 @@ export function MarketplaceSkillDetailDrawer({
                   </pre>
                 )}
 
-                {(explanation || isExplaining) && (
+                {(explanation || isExplaining || explanationError) && (
                   <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
                     <div className="flex items-center gap-1.5 text-xs font-medium text-primary mb-2">
                       <Bot className="size-3.5" />
@@ -250,6 +307,10 @@ export function MarketplaceSkillDetailDrawer({
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Loader2 className="size-3.5 animate-spin" />
                         {t("detail.explanationStreaming")}
+                      </div>
+                    ) : explanationError ? (
+                      <div className="text-sm text-destructive whitespace-pre-wrap leading-relaxed">
+                        {explanationError}
                       </div>
                     ) : (
                       <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">

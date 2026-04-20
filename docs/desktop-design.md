@@ -237,15 +237,15 @@ skills-manage/
 │ ┌─────────────────────────────────────────┐ │
 │ │ 📄 frontend-design                  [→] │ │
 │ │    Build distinctive frontend UIs...    │ │
-│ │    🔗 Central Skills · symlink          │ │
+│ │    🔗 Central Skills ─ symlink          │ │
 │ ├─────────────────────────────────────────┤ │
 │ │ 📄 code-reviewer                    [→] │ │
 │ │    Review code changes and identify...  │ │
-│ │    📁 独立安装 · copy                  │ │
+│ │    📁 独立安装 ─ copy                  │ │
 │ ├─────────────────────────────────────────┤ │
 │ │ 📄 deploy                           [→] │ │
 │ │    Deploy the application to prod...    │ │
-│ │    🔗 Central Skills · symlink          │ │
+│ │    🔗 Central Skills ─ symlink          │ │
 │ └─────────────────────────────────────────┘ │
 │                                             │
 │ 共 3 个 skills，2 个来自 Central Skills     │
@@ -255,7 +255,7 @@ skills-manage/
 每个 skill 条目：
 - 名称（点击进入详情）
 - 描述（截断显示）
-- 来源标识：`🔗 Central Skills · symlink` 或 `📁 独立安装 · copy`
+- 来源标识：左侧来源类型 + 中间短横线连接 + 右侧安装方式，例如 `🔗 Central Skills ─ symlink` 或 `📁 独立安装 ─ copy`
 - 右侧 `→` 进入详情
 
 ---
@@ -411,7 +411,7 @@ skills-manage/
 │ [+ 添加平台]                                │
 │                                             │
 │ ── 关于 ──────────────────────────────────  │
-│ skills-manage v0.1.0                        │
+│ skills-manage v0.8.0                        │
 │ 数据库: ~/.skillsmanage/db.sqlite           │
 └─────────────────────────────────────────────┘
 ```

@@ -24,12 +24,8 @@ pub fn run() {
                 .home_dir()
                 .expect("Failed to resolve home directory");
             let db_dir = home_dir.join(".skillsmanage");
-            fs::create_dir_all(&db_dir)
-                .expect("Failed to create ~/.skillsmanage directory");
-            let db_path = db_dir
-                .join("db.sqlite")
-                .to_string_lossy()
-                .into_owned();
+            fs::create_dir_all(&db_dir).expect("Failed to create ~/.skillsmanage directory");
+            let db_path = db_dir.join("db.sqlite").to_string_lossy().into_owned();
 
             // Create pool and initialize schema
             let pool = tauri::async_runtime::block_on(async {
@@ -64,6 +60,8 @@ pub fn run() {
             commands::skills::get_central_skills,
             commands::skills::get_skill_detail,
             commands::skills::read_skill_content,
+            commands::skills::read_file_by_path,
+            commands::skills::open_in_file_manager,
             // Collections
             commands::collections::create_collection,
             commands::collections::get_collections,
@@ -94,6 +92,7 @@ pub fn run() {
             commands::discover::clear_discovered_skills,
             commands::github_import::preview_github_repo_import,
             commands::github_import::import_github_repo_skills,
+            commands::github_import::fetch_github_skill_markdown,
             // Marketplace
             commands::marketplace::list_registries,
             commands::marketplace::add_registry,

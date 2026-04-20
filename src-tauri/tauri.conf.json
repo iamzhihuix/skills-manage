@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "skills-manage",
-  "version": "0.1.0",
-  "identifier": "com.skillsmanage.app",
+  "version": "0.8.0",
+  "identifier": "com.iamzhihuix.skillsmanage",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:24200",

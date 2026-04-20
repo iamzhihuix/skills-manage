@@ -1,36 +1,11 @@
 import { create } from "zustand";
-import { invoke, isTauriRuntime, listen } from "@/lib/tauri";
+import { invoke, isTauriRuntime } from "@/lib/tauri";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { SkillDetail } from "@/types";
-
-interface ExplanationChunkPayload {
-  skill_id?: string;
-  skillId?: string;
-  chunk?: string;
-  text?: string;
-}
-
-interface ExplanationCompletePayload {
-  skill_id?: string;
-  skillId?: string;
-  explanation?: string;
-  error?: string;
-}
-
-interface ExplanationErrorPayload {
-  skill_id?: string;
-  skillId?: string;
-  error?: string;
-  error_info?: ExplanationErrorInfo;
-}
-
-export interface ExplanationErrorInfo {
-  message: string;
-  details: string;
-  kind: "proxy" | "connect" | "timeout" | "dns" | "tls" | "auth" | "response" | "unknown";
-  retryable: boolean;
-  fallbackTried: boolean;
-}
+import {
+  ExplanationErrorInfo,
+  setupExplanationStreamListeners,
+} from "@/lib/explanationStream";
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -64,7 +39,6 @@ interface SkillDetailState {
 let unlistenChunk: UnlistenFn | null = null;
 let unlistenComplete: UnlistenFn | null = null;
 let unlistenError: UnlistenFn | null = null;
-let activeExplanationSkillId: string | null = null;
 let activeExplanationRequestId = 0;
 
 function nextExplanationRequestId() {
@@ -72,19 +46,10 @@ function nextExplanationRequestId() {
   return activeExplanationRequestId;
 }
 
-function payloadSkillId(payload: ExplanationChunkPayload | ExplanationCompletePayload) {
-  return payload.skill_id ?? payload.skillId ?? null;
-}
-
-function payloadChunkText(payload: ExplanationChunkPayload) {
-  return payload.chunk ?? payload.text ?? "";
-}
-
 function cleanupExplanationListeners() {
   if (unlistenChunk) { unlistenChunk(); unlistenChunk = null; }
   if (unlistenComplete) { unlistenComplete(); unlistenComplete = null; }
   if (unlistenError) { unlistenError(); unlistenError = null; }
-  activeExplanationSkillId = null;
 }
 
 function startExplanationRequest(set: (fn: Partial<SkillDetailState>) => void) {
@@ -123,49 +88,46 @@ async function setupExplanationListeners(
   set: (fn: Partial<SkillDetailState> | ((s: SkillDetailState) => Partial<SkillDetailState>)) => void
 ) {
   cleanupExplanationListeners();
-  activeExplanationSkillId = skillId;
   activeExplanationRequestId = requestId;
-
-  unlistenChunk = await listen<ExplanationChunkPayload>("skill:explanation:chunk", (event) => {
-    const eventSkillId = payloadSkillId(event.payload);
-    if (requestId !== activeExplanationRequestId) return;
-    if (eventSkillId && eventSkillId !== activeExplanationSkillId) return;
-    const chunkText = payloadChunkText(event.payload);
-    if (!chunkText) return;
-    set((state) => ({
-      explanation: `${state.explanation ?? ""}${chunkText}`,
-      isExplanationLoading: false,
-      isExplanationStreaming: true,
-    }));
+  const stopListening = await setupExplanationStreamListeners(skillId, {
+    onChunk: (chunkText) => {
+      if (requestId !== activeExplanationRequestId) return;
+      set((state) => ({
+        explanation: `${state.explanation ?? ""}${chunkText}`,
+        isExplanationLoading: false,
+        isExplanationStreaming: true,
+      }));
+    },
+    onComplete: (payload) => {
+      if (requestId !== activeExplanationRequestId) return;
+      set((state) => {
+        const nextExplanation = payload.explanation ?? state.explanation;
+        const hasExplanation = Boolean(nextExplanation?.trim());
+        return {
+          explanation: hasExplanation ? nextExplanation : null,
+          explanationError: hasExplanation ? payload.error ?? null : "AI explanation returned no content.",
+          explanationErrorInfo: null,
+          isExplanationLoading: false,
+          isExplanationStreaming: false,
+        };
+      });
+      cleanupExplanationListeners();
+    },
+    onError: (payload) => {
+      if (requestId !== activeExplanationRequestId) return;
+      set({
+        explanation: null,
+        explanationError: payload.error ?? "Unknown explanation error",
+        explanationErrorInfo: payload.error_info ?? null,
+        isExplanationLoading: false,
+        isExplanationStreaming: false,
+      });
+      cleanupExplanationListeners();
+    },
   });
-
-  unlistenComplete = await listen<ExplanationCompletePayload>("skill:explanation:complete", (event) => {
-    const eventSkillId = payloadSkillId(event.payload);
-    if (requestId !== activeExplanationRequestId) return;
-    if (eventSkillId && eventSkillId !== activeExplanationSkillId) return;
-    set((state) => ({
-      explanation: event.payload.explanation ?? state.explanation,
-      explanationError: event.payload.error ?? null,
-      explanationErrorInfo: null,
-      isExplanationLoading: false,
-      isExplanationStreaming: false,
-    }));
-    cleanupExplanationListeners();
-  });
-
-  unlistenError = await listen<ExplanationErrorPayload>("skill:explanation:error", (event) => {
-    const eventSkillId = payloadSkillId(event.payload);
-    if (requestId !== activeExplanationRequestId) return;
-    if (eventSkillId && eventSkillId !== activeExplanationSkillId) return;
-    set({
-      explanation: null,
-      explanationError: event.payload.error ?? "Unknown explanation error",
-      explanationErrorInfo: event.payload.error_info ?? null,
-      isExplanationLoading: false,
-      isExplanationStreaming: false,
-    });
-    cleanupExplanationListeners();
-  });
+  unlistenChunk = stopListening;
+  unlistenComplete = () => {};
+  unlistenError = () => {};
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────

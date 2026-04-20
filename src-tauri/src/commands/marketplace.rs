@@ -112,7 +112,7 @@ async fn fetch_github_skills(
 ) -> Result<Vec<MarketplaceSkill>, String> {
     let (owner, repo) = parse_github_url(url)?;
     let client = reqwest::Client::builder()
-        .user_agent("skills-manage/0.1.0")
+        .user_agent("skills-manage/0.8.0")
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -375,12 +375,7 @@ pub async fn sync_registry_with_options(
     registry_id: String,
     options: Option<SyncRegistryOptions>,
 ) -> Result<Vec<MarketplaceSkill>, String> {
-    sync_registry_impl(
-        &state.db,
-        registry_id,
-        options.unwrap_or_default(),
-    )
-    .await
+    sync_registry_impl(&state.db, registry_id, options.unwrap_or_default()).await
 }
 
 async fn sync_registry_impl(
@@ -474,8 +469,10 @@ async fn sync_registry_impl(
 
     // Upsert skills into marketplace_skills
     for skill in &skills {
-        let is_installed =
-            std::path::Path::new(&central_dir).join(&skill.name).join("SKILL.md").exists();
+        let is_installed = std::path::Path::new(&central_dir)
+            .join(&skill.name)
+            .join("SKILL.md")
+            .exists();
 
         sqlx::query(
             "INSERT INTO marketplace_skills (id, registry_id, name, description, download_url, is_installed, synced_at, cache_updated_at)
@@ -619,7 +616,7 @@ pub async fn install_marketplace_skill(
 
     // Download SKILL.md content
     let client = reqwest::Client::builder()
-        .user_agent("skills-manage/0.1.0")
+        .user_agent("skills-manage/0.8.0")
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -640,10 +637,7 @@ pub async fn install_marketplace_skill(
 
     // Create directory and write SKILL.md
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    let skill_dir = std::path::PathBuf::from(format!(
-        "{}/.agents/skills/{}",
-        home, skill.name
-    ));
+    let skill_dir = std::path::PathBuf::from(format!("{}/.agents/skills/{}", home, skill.name));
     std::fs::create_dir_all(&skill_dir)
         .map_err(|e| format!("Failed to create directory: {}", e))?;
 
@@ -752,7 +746,8 @@ fn classify_reqwest_error(e: &reqwest::Error, fallback_tried: bool) -> Explanati
     let chain = parts.join(" → ");
     let low = chain.to_ascii_lowercase();
 
-    let (kind, message, retryable) = if low.contains("tunnel") || (low.contains("proxy") && low.contains("connect"))
+    let (kind, message, retryable) = if low.contains("tunnel")
+        || (low.contains("proxy") && low.contains("connect"))
         || (low.contains("proxy") && low.contains("unsuccessful"))
     {
         (
@@ -818,10 +813,7 @@ fn format_reqwest_error(e: &reqwest::Error) -> String {
 }
 
 #[tauri::command]
-pub async fn explain_skill(
-    state: State<'_, AppState>,
-    content: String,
-) -> Result<String, String> {
+pub async fn explain_skill(state: State<'_, AppState>, content: String) -> Result<String, String> {
     // Read dynamic provider settings
     async fn get_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
         sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
@@ -846,7 +838,7 @@ pub async fn explain_skill(
         .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
 
     let client = reqwest::Client::builder()
-        .user_agent("skills-manage/0.1.0")
+        .user_agent("skills-manage/0.8.0")
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .build()
@@ -885,8 +877,7 @@ pub async fn explain_skill(
                 .header("anthropic-version", "2023-06-01");
         }
         ExplanationApiProtocol::OpenAiCompatible => {
-            req_builder =
-                req_builder.header("authorization", format!("Bearer {}", api_key));
+            req_builder = req_builder.header("authorization", format!("Bearer {}", api_key));
         }
     }
 
@@ -952,6 +943,108 @@ pub struct ExplanationCompletePayload {
     pub explanation: Option<String>,
 }
 
+fn explanation_has_content(explanation: &str) -> bool {
+    !explanation.trim().is_empty()
+}
+
+async fn delete_cached_skill_explanation(
+    pool: &crate::db::DbPool,
+    skill_id: &str,
+    lang: &str,
+) -> Result<(), String> {
+    sqlx::query("DELETE FROM skill_explanations WHERE skill_id = ? AND lang = ?")
+        .bind(skill_id)
+        .bind(lang)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+async fn load_cached_skill_explanation(
+    pool: &crate::db::DbPool,
+    skill_id: &str,
+    lang: &str,
+) -> Result<Option<String>, String> {
+    use sqlx::Row;
+
+    let row =
+        sqlx::query("SELECT explanation FROM skill_explanations WHERE skill_id = ? AND lang = ?")
+            .bind(skill_id)
+            .bind(lang)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    match row {
+        Some(row) => {
+            let explanation: String = row.get("explanation");
+            if explanation_has_content(&explanation) {
+                Ok(Some(explanation))
+            } else {
+                // Older builds could persist empty strings. Treat them as cache
+                // corruption so the next request re-generates a fresh explanation.
+                delete_cached_skill_explanation(pool, skill_id, lang).await?;
+                Ok(None)
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+async fn cache_skill_explanation(
+    pool: &crate::db::DbPool,
+    skill_id: &str,
+    lang: &str,
+    model: &str,
+    explanation: &str,
+) -> Result<(), String> {
+    if !explanation_has_content(explanation) {
+        return Err("AI explanation returned no content.".to_string());
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT OR REPLACE INTO skill_explanations (skill_id, explanation, lang, model, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 
+            COALESCE((SELECT created_at FROM skill_explanations WHERE skill_id = ? AND lang = ?), ?),
+            ?)",
+    )
+    .bind(skill_id)
+    .bind(explanation)
+    .bind(lang)
+    .bind(model)
+    .bind(skill_id)
+    .bind(lang)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("缓存解释失败: {}", e))?;
+
+    Ok(())
+}
+
+fn empty_explanation_error_info(lang: &str, saw_thinking_delta: bool) -> ExplanationErrorInfo {
+    let message = match lang {
+        "en" => "The model returned no displayable explanation text.".to_string(),
+        _ => "模型没有返回可显示的解释正文。".to_string(),
+    };
+    let details = if saw_thinking_delta {
+        "Streaming completed without any text_delta content. The provider emitted thinking deltas but no final text block.".to_string()
+    } else {
+        "Streaming completed without any text_delta content.".to_string()
+    };
+
+    ExplanationErrorInfo {
+        message,
+        details,
+        kind: ExplanationErrorKind::Response,
+        retryable: true,
+        fallback_tried: false,
+    }
+}
+
 /// Helper: read a setting from the DB, filtering out empty values.
 async fn get_ai_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
     sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
@@ -1010,12 +1103,21 @@ fn build_stream_request_body(model: &str, prompt: &str) -> serde_json::Value {
 fn get_fallback_endpoint(provider: &str, current_url: &str) -> Option<String> {
     let alternatives: &[(&str, &str)] = match provider {
         "minimax" => &[
-            ("minimaxi.com", "https://api.minimax.io/anthropic/v1/messages"),
-            ("minimax.io", "https://api.minimaxi.com/anthropic/v1/messages"),
+            (
+                "minimaxi.com",
+                "https://api.minimax.io/anthropic/v1/messages",
+            ),
+            (
+                "minimax.io",
+                "https://api.minimaxi.com/anthropic/v1/messages",
+            ),
         ],
         "glm" => &[
             ("bigmodel.cn", "https://api.z.ai/api/anthropic/v1/messages"),
-            ("api.z.ai", "https://open.bigmodel.cn/api/anthropic/v1/messages"),
+            (
+                "api.z.ai",
+                "https://open.bigmodel.cn/api/anthropic/v1/messages",
+            ),
         ],
         _ => return None,
     };
@@ -1075,7 +1177,9 @@ async fn do_explain_skill_stream(
         .await
         .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
 
-    let provider = get_ai_setting(pool, "ai_provider").await.unwrap_or_default();
+    let provider = get_ai_setting(pool, "ai_provider")
+        .await
+        .unwrap_or_default();
 
     let protocol = detect_explanation_api_protocol(&api_url);
     let is_anthropic = matches!(
@@ -1089,41 +1193,63 @@ async fn do_explain_skill_stream(
 
     // Streaming: only connect_timeout (total `.timeout()` would kill long streams).
     let client = reqwest::Client::builder()
-        .user_agent("skills-manage/0.1.0")
+        .user_agent("skills-manage/0.8.0")
         .connect_timeout(Duration::from_secs(10))
         .pool_idle_timeout(Duration::from_secs(90))
         .build()
         .map_err(|e| e.to_string())?;
 
     // Try primary endpoint; on connect-layer failure, try fallback once
-    let resp = match send_stream_request(&client, &api_url, &api_key, &body, is_anthropic, false).await {
-        Ok(r) => r,
-        Err(err_info) => {
-            // Only retry on connect-layer errors that are retryable
-            if err_info.retryable {
-                if let Some(fallback_url) = get_fallback_endpoint(&provider, &api_url) {
-                    eprintln!(
-                        "[explain] primary endpoint failed ({:?}), trying fallback: {}",
-                        err_info.kind, fallback_url
-                    );
-                    let fallback_protocol = detect_explanation_api_protocol(&fallback_url);
-                    let fallback_anthropic = matches!(
-                        fallback_protocol,
-                        ExplanationApiProtocol::AnthropicCompatible | ExplanationApiProtocol::Unknown
-                    );
-                    match send_stream_request(&client, &fallback_url, &api_key, &body, fallback_anthropic, true).await {
-                        Ok(r) => r,
-                        Err(fallback_err) => {
-                            let _ = app.emit(
-                                "skill:explanation:error",
-                                serde_json::json!({
-                                    "skill_id": skill_id,
-                                    "error": &fallback_err.message,
-                                    "error_info": fallback_err,
-                                }),
-                            );
-                            return Err(fallback_err.message);
+    let resp =
+        match send_stream_request(&client, &api_url, &api_key, &body, is_anthropic, false).await {
+            Ok(r) => r,
+            Err(err_info) => {
+                // Only retry on connect-layer errors that are retryable
+                if err_info.retryable {
+                    if let Some(fallback_url) = get_fallback_endpoint(&provider, &api_url) {
+                        eprintln!(
+                            "[explain] primary endpoint failed ({:?}), trying fallback: {}",
+                            err_info.kind, fallback_url
+                        );
+                        let fallback_protocol = detect_explanation_api_protocol(&fallback_url);
+                        let fallback_anthropic = matches!(
+                            fallback_protocol,
+                            ExplanationApiProtocol::AnthropicCompatible
+                                | ExplanationApiProtocol::Unknown
+                        );
+                        match send_stream_request(
+                            &client,
+                            &fallback_url,
+                            &api_key,
+                            &body,
+                            fallback_anthropic,
+                            true,
+                        )
+                        .await
+                        {
+                            Ok(r) => r,
+                            Err(fallback_err) => {
+                                let _ = app.emit(
+                                    "skill:explanation:error",
+                                    serde_json::json!({
+                                        "skill_id": skill_id,
+                                        "error": &fallback_err.message,
+                                        "error_info": fallback_err,
+                                    }),
+                                );
+                                return Err(fallback_err.message);
+                            }
                         }
+                    } else {
+                        let _ = app.emit(
+                            "skill:explanation:error",
+                            serde_json::json!({
+                                "skill_id": skill_id,
+                                "error": &err_info.message,
+                                "error_info": err_info,
+                            }),
+                        );
+                        return Err(err_info.message);
                     }
                 } else {
                     let _ = app.emit(
@@ -1136,19 +1262,8 @@ async fn do_explain_skill_stream(
                     );
                     return Err(err_info.message);
                 }
-            } else {
-                let _ = app.emit(
-                    "skill:explanation:error",
-                    serde_json::json!({
-                        "skill_id": skill_id,
-                        "error": &err_info.message,
-                        "error_info": err_info,
-                    }),
-                );
-                return Err(err_info.message);
             }
-        }
-    };
+        };
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -1188,6 +1303,7 @@ async fn do_explain_skill_stream(
     let mut stream = resp.bytes_stream();
     let mut full_text = String::new();
     let mut sse_buffer = String::new();
+    let mut saw_thinking_delta = false;
 
     while let Some(chunk_result) = stream.next().await {
         let chunk = chunk_result.map_err(|e| format!("流读取失败: {}", e))?;
@@ -1222,6 +1338,14 @@ async fn do_explain_skill_stream(
             let text_chunk = if is_anthropic {
                 // Anthropic SSE: { "type": "content_block_delta", "delta": { "type": "text_delta", "text": "..." } }
                 let event_type = parsed.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                let delta_type = parsed
+                    .get("delta")
+                    .and_then(|d| d.get("type"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+                if event_type == "content_block_delta" && delta_type == "thinking_delta" {
+                    saw_thinking_delta = true;
+                }
                 if event_type == "content_block_delta" {
                     parsed
                         .get("delta")
@@ -1257,25 +1381,20 @@ async fn do_explain_skill_stream(
         }
     }
 
-    // Save to cache
-    let now = chrono::Utc::now().to_rfc3339();
-    sqlx::query(
-        "INSERT OR REPLACE INTO skill_explanations (skill_id, explanation, lang, model, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 
-            COALESCE((SELECT created_at FROM skill_explanations WHERE skill_id = ? AND lang = ?), ?),
-            ?)",
-    )
-    .bind(skill_id)
-    .bind(&full_text)
-    .bind(lang)
-    .bind(&model)
-    .bind(skill_id)
-    .bind(lang)
-    .bind(&now)
-    .bind(&now)
-    .execute(pool)
-    .await
-    .map_err(|e| format!("缓存解释失败: {}", e))?;
+    if !explanation_has_content(&full_text) {
+        let err_info = empty_explanation_error_info(lang, saw_thinking_delta);
+        let _ = app.emit(
+            "skill:explanation:error",
+            serde_json::json!({
+                "skill_id": skill_id,
+                "error": &err_info.message,
+                "error_info": err_info,
+            }),
+        );
+        return Err("AI explanation returned no content.".to_string());
+    }
+
+    cache_skill_explanation(pool, skill_id, lang, &model, &full_text).await?;
 
     let _ = app.emit(
         "skill:explanation:complete",
@@ -1295,22 +1414,7 @@ pub async fn get_skill_explanation(
     skill_id: String,
     lang: String,
 ) -> Result<Option<String>, String> {
-    let row = sqlx::query(
-        "SELECT explanation FROM skill_explanations WHERE skill_id = ? AND lang = ?",
-    )
-    .bind(&skill_id)
-    .bind(&lang)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    match row {
-        Some(r) => {
-            use sqlx::Row;
-            Ok(Some(r.get::<String, _>("explanation")))
-        }
-        None => Ok(None),
-    }
+    load_cached_skill_explanation(&state.db, &skill_id, &lang).await
 }
 
 /// Stream an AI-generated explanation for a skill, with DB caching.
@@ -1326,18 +1430,7 @@ pub async fn explain_skill_stream(
     lang: String,
 ) -> Result<(), String> {
     // Check cache first
-    let cached = sqlx::query(
-        "SELECT explanation FROM skill_explanations WHERE skill_id = ? AND lang = ?",
-    )
-    .bind(&skill_id)
-    .bind(&lang)
-    .fetch_optional(&state.db)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    if let Some(row) = cached {
-        use sqlx::Row;
-        let explanation: String = row.get("explanation");
+    if let Some(explanation) = load_cached_skill_explanation(&state.db, &skill_id, &lang).await? {
         let _ = app.emit(
             "skill:explanation:chunk",
             ExplanationChunkPayload {
@@ -1368,12 +1461,7 @@ pub async fn refresh_skill_explanation(
     lang: String,
 ) -> Result<(), String> {
     // Delete cached explanation
-    sqlx::query("DELETE FROM skill_explanations WHERE skill_id = ? AND lang = ?")
-        .bind(&skill_id)
-        .bind(&lang)
-        .execute(&state.db)
-        .await
-        .map_err(|e| e.to_string())?;
+    delete_cached_skill_explanation(&state.db, &skill_id, &lang).await?;
 
     do_explain_skill_stream(&state.db, &app, &skill_id, &content, &lang).await
 }
@@ -1381,10 +1469,11 @@ pub async fn refresh_skill_explanation(
 #[cfg(test)]
 mod tests {
     use super::{
-        add_registry_impl, classify_reqwest_error, detect_explanation_api_protocol,
-        format_reqwest_error, get_fallback_endpoint, registry_has_cached_skills,
-        search_marketplace_skills_impl, sync_registry_impl, ExplanationApiProtocol,
-        ExplanationErrorKind, RegistryCacheMetadata, RegistrySyncStatus, SyncRegistryOptions,
+        add_registry_impl, cache_skill_explanation, classify_reqwest_error,
+        detect_explanation_api_protocol, format_reqwest_error, get_fallback_endpoint,
+        load_cached_skill_explanation, registry_has_cached_skills, search_marketplace_skills_impl,
+        sync_registry_impl, ExplanationApiProtocol, ExplanationErrorKind, RegistryCacheMetadata,
+        RegistrySyncStatus, SyncRegistryOptions,
     };
     use crate::db;
     use tempfile::{tempdir, TempDir};
@@ -1477,10 +1566,7 @@ mod tests {
 
     #[test]
     fn minimax_cn_falls_back_to_intl() {
-        let fb = get_fallback_endpoint(
-            "minimax",
-            "https://api.minimaxi.com/anthropic/v1/messages",
-        );
+        let fb = get_fallback_endpoint("minimax", "https://api.minimaxi.com/anthropic/v1/messages");
         assert_eq!(
             fb.as_deref(),
             Some("https://api.minimax.io/anthropic/v1/messages")
@@ -1489,10 +1575,7 @@ mod tests {
 
     #[test]
     fn minimax_intl_falls_back_to_cn() {
-        let fb = get_fallback_endpoint(
-            "minimax",
-            "https://api.minimax.io/anthropic/v1/messages",
-        );
+        let fb = get_fallback_endpoint("minimax", "https://api.minimax.io/anthropic/v1/messages");
         assert_eq!(
             fb.as_deref(),
             Some("https://api.minimaxi.com/anthropic/v1/messages")
@@ -1501,10 +1584,7 @@ mod tests {
 
     #[test]
     fn glm_cn_falls_back_to_intl() {
-        let fb = get_fallback_endpoint(
-            "glm",
-            "https://open.bigmodel.cn/api/anthropic/v1/messages",
-        );
+        let fb = get_fallback_endpoint("glm", "https://open.bigmodel.cn/api/anthropic/v1/messages");
         assert_eq!(
             fb.as_deref(),
             Some("https://api.z.ai/api/anthropic/v1/messages")
@@ -1513,10 +1593,7 @@ mod tests {
 
     #[test]
     fn glm_intl_falls_back_to_cn() {
-        let fb = get_fallback_endpoint(
-            "glm",
-            "https://api.z.ai/api/anthropic/v1/messages",
-        );
+        let fb = get_fallback_endpoint("glm", "https://api.z.ai/api/anthropic/v1/messages");
         assert_eq!(
             fb.as_deref(),
             Some("https://open.bigmodel.cn/api/anthropic/v1/messages")
@@ -1525,20 +1602,68 @@ mod tests {
 
     #[test]
     fn claude_has_no_fallback() {
-        let fb = get_fallback_endpoint(
-            "claude",
-            "https://api.anthropic.com/v1/messages",
-        );
+        let fb = get_fallback_endpoint("claude", "https://api.anthropic.com/v1/messages");
         assert!(fb.is_none());
     }
 
     #[test]
     fn custom_provider_has_no_fallback() {
-        let fb = get_fallback_endpoint(
-            "custom",
-            "https://my-proxy.example.com/v1/messages",
-        );
+        let fb = get_fallback_endpoint("custom", "https://my-proxy.example.com/v1/messages");
         assert!(fb.is_none());
+    }
+
+    #[tokio::test]
+    async fn load_cached_skill_explanation_drops_empty_rows() {
+        let (pool, _dir) = setup_test_db().await;
+
+        sqlx::query(
+            "INSERT INTO skill_explanations (skill_id, explanation, lang, model, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("defuddle")
+        .bind("")
+        .bind("zh")
+        .bind("MiniMax-M2.7")
+        .bind("2026-04-19T00:00:00Z")
+        .bind("2026-04-19T00:00:00Z")
+        .execute(&pool)
+        .await
+        .expect("insert empty explanation");
+
+        let explanation = load_cached_skill_explanation(&pool, "defuddle", "zh")
+            .await
+            .expect("load cached explanation");
+        assert!(explanation.is_none());
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM skill_explanations WHERE skill_id = ? AND lang = ?",
+        )
+        .bind("defuddle")
+        .bind("zh")
+        .fetch_one(&pool)
+        .await
+        .expect("count explanations");
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn cache_skill_explanation_rejects_blank_text() {
+        let (pool, _dir) = setup_test_db().await;
+
+        let err = cache_skill_explanation(&pool, "defuddle", "zh", "MiniMax-M2.7", "   ")
+            .await
+            .expect_err("blank explanations should be rejected");
+        assert!(err.contains("no content"));
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM skill_explanations WHERE skill_id = ? AND lang = ?",
+        )
+        .bind("defuddle")
+        .bind("zh")
+        .fetch_one(&pool)
+        .await
+        .expect("count explanations");
+        assert_eq!(count, 0);
     }
 
     #[tokio::test]
@@ -1572,7 +1697,10 @@ mod tests {
             row.get::<String, _>("last_sync_status"),
             RegistrySyncStatus::Never.as_str()
         );
-        assert_eq!(row.get::<Option<String>, _>("etag").as_deref(), Some("etag-123"));
+        assert_eq!(
+            row.get::<Option<String>, _>("etag").as_deref(),
+            Some("etag-123")
+        );
         assert_eq!(
             row.get::<Option<String>, _>("last_modified").as_deref(),
             Some("Wed, 01 Jan 2025 00:00:00 GMT")
@@ -1629,7 +1757,9 @@ mod tests {
         .expect("fetch registry");
 
         use sqlx::Row;
-        assert!(row.get::<Option<String>, _>("last_attempted_sync").is_none());
+        assert!(row
+            .get::<Option<String>, _>("last_attempted_sync")
+            .is_none());
         assert!(row.get::<Option<String>, _>("last_synced").is_none());
         assert_eq!(
             row.get::<String, _>("last_sync_status"),
@@ -1669,7 +1799,9 @@ mod tests {
         let skills = sync_registry_impl(
             &pool,
             registry.id.clone(),
-            SyncRegistryOptions { force_refresh: true },
+            SyncRegistryOptions {
+                force_refresh: true,
+            },
         )
         .await
         .expect("force refresh returns cached data on failure");
@@ -1754,10 +1886,8 @@ mod tests {
             .expect("pragma skills");
 
         use sqlx::Row;
-        let registry_names: Vec<String> = registry_columns
-            .iter()
-            .map(|row| row.get("name"))
-            .collect();
+        let registry_names: Vec<String> =
+            registry_columns.iter().map(|row| row.get("name")).collect();
         let skill_names: Vec<String> = skill_columns.iter().map(|row| row.get("name")).collect();
 
         for expected in [
@@ -1793,7 +1923,9 @@ mod tests {
         .await
         .expect("registry created");
 
-        assert!(!registry_has_cached_skills(&pool, &registry.id).await.expect("empty"));
+        assert!(!registry_has_cached_skills(&pool, &registry.id)
+            .await
+            .expect("empty"));
 
         sqlx::query(
             "INSERT INTO marketplace_skills
@@ -1811,6 +1943,8 @@ mod tests {
         .await
         .expect("insert skill");
 
-        assert!(registry_has_cached_skills(&pool, &registry.id).await.expect("cached"));
+        assert!(registry_has_cached_skills(&pool, &registry.id)
+            .await
+            .expect("cached"));
     }
 }

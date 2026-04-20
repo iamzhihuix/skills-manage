@@ -114,7 +114,17 @@ function buildSkillStoreState(overrides = {}) {
   };
 }
 
-function renderPlatformView(agentId = "claude-code") {
+function buildCentralSkillsStoreState(overrides = {}) {
+  return {
+    skills: [],
+    agents: [mockAgent],
+    loadCentralSkills: mockLoadCentralSkills,
+    installSkill: mockInstallSkill,
+    ...overrides,
+  };
+}
+
+function installDefaultStoreMocks() {
   mockUsePlatformStore.mockImplementation((selector?: unknown) => {
     const state = buildPlatformStoreState();
     if (typeof selector === "function") return selector(state);
@@ -126,16 +136,13 @@ function renderPlatformView(agentId = "claude-code") {
     return state;
   });
   mockUseCentralSkillsStore.mockImplementation((selector?: unknown) => {
-    const state = {
-      skills: [],
-      agents: [mockAgent],
-      loadCentralSkills: mockLoadCentralSkills,
-      installSkill: mockInstallSkill,
-    };
+    const state = buildCentralSkillsStoreState();
     if (typeof selector === "function") return selector(state);
     return state;
   });
+}
 
+function renderPlatformView(agentId = "claude-code") {
   return render(
     <MemoryRouter initialEntries={[`/platform/${agentId}`]}>
       <Routes>
@@ -150,6 +157,7 @@ function renderPlatformView(agentId = "claude-code") {
 describe("PlatformView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    installDefaultStoreMocks();
   });
 
   // ── Header ────────────────────────────────────────────────────────────────
@@ -174,15 +182,39 @@ describe("PlatformView", () => {
 
   it("shows source indicator on skill cards", () => {
     renderPlatformView();
-    expect(screen.getByText("中央技能库 · 符号链接")).toBeInTheDocument();
-    expect(screen.getByText("独立安装 · 复制安装")).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) => element?.textContent?.replace(/\s+/g, " ").trim() === "中央技能库 - 符号链接")
+        .length
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText((_, element) => element?.textContent?.replace(/\s+/g, " ").trim() === "独立安装 - 复制安装")
+        .length
+    ).toBeGreaterThan(0);
   });
 
   it("renders browser fixture installed card on the localhost validation surface without Tauri", async () => {
     const isTauriSpy = vi.spyOn(tauriBridge, "isTauriRuntime").mockReturnValue(false);
-    mockUsePlatformStore.mockRestore();
-    mockUseSkillStore.mockRestore();
-    mockUseCentralSkillsStore.mockRestore();
+
+    mockUseSkillStore.mockImplementation((selector?: unknown) => {
+      const state = buildSkillStoreState({
+        skillsByAgent: {
+          "claude-code": [
+            {
+              id: "fixture-central-skill",
+              name: "fixture-central-skill",
+              description: "Browser fixture skill sourced from the central library",
+              file_path: "~/.claude/skills/fixture-central-skill/SKILL.md",
+              dir_path: "~/.claude/skills/fixture-central-skill",
+              link_type: "symlink",
+              symlink_target: "~/.agents/skills/fixture-central-skill",
+              is_central: true,
+            },
+          ],
+        },
+      });
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
 
     render(
       <MemoryRouter initialEntries={["/platform/claude-code"]}>
@@ -193,7 +225,10 @@ describe("PlatformView", () => {
     );
 
     expect(await screen.findByRole("button", { name: /查看 fixture-central-skill 的详情/i })).toBeInTheDocument();
-    expect(screen.getByText("中央技能库 · 符号链接")).toBeInTheDocument();
+    expect(
+      screen.getAllByText((_, element) => element?.textContent?.replace(/\s+/g, " ").trim() === "中央技能库 - 符号链接")
+        .length
+    ).toBeGreaterThan(0);
 
     isTauriSpy.mockRestore();
   });

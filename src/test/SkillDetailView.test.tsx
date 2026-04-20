@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { SkillDetailView } from "../components/skill/SkillDetailView";
 import { AgentWithStatus, SkillDetail as SkillDetailType } from "../types";
@@ -21,6 +21,7 @@ vi.mock("../components/collection/CollectionPickerDialog", () => ({
     open,
     onOpenChange,
     onAdded,
+    currentCollectionIds,
   }: {
     open: boolean;
     onOpenChange: (open: boolean) => void;
@@ -29,7 +30,10 @@ vi.mock("../components/collection/CollectionPickerDialog", () => ({
     onAdded: () => void;
   }) =>
     open ? (
-      <div data-testid="collection-picker-dialog">
+      <div
+        data-testid="collection-picker-dialog"
+        data-current-collection-ids={currentCollectionIds.join(",")}
+      >
         <button onClick={() => { onAdded(); onOpenChange(false); }}>
           Confirm add to collection
         </button>
@@ -101,6 +105,7 @@ const mockDetail: SkillDetailType = {
   is_central: true,
   source: "native",
   scanned_at: "2026-04-09T00:00:00Z",
+  collections: [],
   installations: [
     {
       skill_id: "frontend-design",
@@ -114,7 +119,7 @@ const mockDetail: SkillDetailType = {
 };
 
 const mockContent =
-  "---\nname: frontend-design\n---\n\n# Frontend Design\n\nContent here.";
+  "---\nname: frontend-design\ndescription: Build distinctive, production-grade frontend interfaces\nmetadata:\n  openclaw:\n    requires:\n      anyBins:\n        - bun\n        - npx\n---\n\n# Frontend Design\n\nContent here.";
 
 const mockLoadDetail = vi.fn();
 const mockInstallSkill = vi.fn();
@@ -181,9 +186,12 @@ function applyStoreMocks(detailOverrides = {}, platformOverrides = {}) {
 
 function renderView(
   skillId = "frontend-design",
-  variant: "page" | "drawer" = "page"
+  variant: "page" | "drawer" = "page",
+  options?: { skipMockSetup?: boolean }
 ) {
-  applyStoreMocks();
+  if (!options?.skipMockSetup) {
+    applyStoreMocks();
+  }
   return render(
     <MemoryRouter>
       <SkillDetailView skillId={skillId} variant={variant} />
@@ -215,7 +223,7 @@ describe("SkillDetailView", () => {
   it("shows skill description in ViewHeader", () => {
     renderView();
     expect(
-      screen.getByText("Build distinctive, production-grade frontend interfaces")
+      screen.getAllByText("Build distinctive, production-grade frontend interfaces")[0]
     ).toBeInTheDocument();
   });
 
@@ -329,15 +337,33 @@ describe("SkillDetailView", () => {
 
   it("shows collection tags when collections are present", () => {
     applyStoreMocks({
-      detail: { ...mockDetail, collections: ["frontend", "design-system"] },
+      detail: {
+        ...mockDetail,
+        collections: [
+          {
+            id: "frontend",
+            name: "Frontend",
+            description: "Frontend patterns",
+            created_at: "2026-04-09T00:00:00Z",
+            updated_at: "2026-04-09T00:00:00Z",
+          },
+          {
+            id: "design-system",
+            name: "Design System",
+            description: "Shared UI system",
+            created_at: "2026-04-09T00:00:00Z",
+            updated_at: "2026-04-09T00:00:00Z",
+          },
+        ],
+      },
     });
     render(
       <MemoryRouter>
         <SkillDetailView skillId="frontend-design" variant="page" />
       </MemoryRouter>
     );
-    expect(screen.getByText("frontend")).toBeInTheDocument();
-    expect(screen.getByText("design-system")).toBeInTheDocument();
+    expect(screen.getByText("Frontend")).toBeInTheDocument();
+    expect(screen.getByText("Design System")).toBeInTheDocument();
   });
 
   // ── SKILL.md Preview ──────────────────────────────────────────────────────
@@ -370,11 +396,45 @@ describe("SkillDetailView", () => {
     expect(screen.getByTestId("react-markdown")).toHaveAttribute("data-has-remark-gfm", "true");
   });
 
-  it("strips frontmatter in Markdown tab", () => {
+  it("renders frontmatter card in Markdown tab", () => {
     renderView();
-    const markdown = screen.getByTestId("react-markdown");
-    expect(markdown).toHaveTextContent("# Frontend Design");
-    expect(markdown).not.toHaveTextContent("name: frontend-design");
+    const markdown = screen.getByRole("tabpanel", { name: /Markdown/i });
+    expect(within(markdown).getByRole("heading", { name: /Frontmatter/i })).toBeInTheDocument();
+    expect(within(markdown).getByText("frontend-design")).toBeInTheDocument();
+    expect(within(markdown).getByText("Build distinctive, production-grade frontend interfaces")).toBeInTheDocument();
+    expect(within(markdown).getByText("bun")).toBeInTheDocument();
+    expect(within(markdown).getByText("npx")).toBeInTheDocument();
+    expect(screen.getByTestId("react-markdown")).toHaveTextContent("# Frontend Design");
+  });
+
+  it("strips BOM-prefixed frontmatter before rendering markdown", () => {
+    applyStoreMocks({
+      content:
+        "\uFEFF---\r\nname: wrangler\r\ndescription: Cloudflare Workers CLI\r\n---\r\n\r\n# Wrangler CLI\r\n\r\nBody.",
+    });
+    renderView("frontend-design", "page", { skipMockSetup: true });
+
+    const markdown = screen.getByRole("tabpanel", { name: /Markdown/i });
+    expect(within(markdown).getByText("wrangler")).toBeInTheDocument();
+    expect(screen.getByTestId("react-markdown")).toHaveTextContent("# Wrangler CLI");
+    expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("name: wrangler");
+    expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("---");
+  });
+
+  it("keeps malformed frontmatter out of markdown body while preserving summary fields", () => {
+    applyStoreMocks({
+      content:
+        "---\nname: broken-skill\ndescription: Broken summary\nmetadata: [oops\n---\n\n# Broken Skill\n\nBody.",
+    });
+    renderView("frontend-design", "page", { skipMockSetup: true });
+
+    const markdown = screen.getByRole("tabpanel", { name: /Markdown/i });
+    expect(within(markdown).getByRole("heading", { name: /Frontmatter/i })).toBeInTheDocument();
+    expect(within(markdown).getByText("broken-skill")).toBeInTheDocument();
+    expect(within(markdown).getByText("Broken summary")).toBeInTheDocument();
+    expect(screen.getByTestId("react-markdown")).toHaveTextContent("# Broken Skill");
+    expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("name: broken-skill");
+    expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("metadata: [oops");
   });
 
   it("switches to raw source tab when Raw Source is clicked", async () => {
@@ -669,6 +729,40 @@ describe("SkillDetailView", () => {
     fireEvent.click(addBtn);
     await waitFor(() => {
       expect(screen.getByTestId("collection-picker-dialog")).toBeInTheDocument();
+    });
+  });
+
+  it("passes current collection ids into CollectionPickerDialog for preselection", async () => {
+    applyStoreMocks({
+      detail: {
+        ...mockDetail,
+        collections: [
+          {
+            id: "frontend",
+            name: "Frontend",
+            description: "Frontend patterns",
+            created_at: "2026-04-09T00:00:00Z",
+            updated_at: "2026-04-09T00:00:00Z",
+          },
+          {
+            id: "design-system",
+            name: "Design System",
+            description: "Shared UI system",
+            created_at: "2026-04-09T00:00:00Z",
+            updated_at: "2026-04-09T00:00:00Z",
+          },
+        ],
+      },
+    });
+    renderView("frontend-design", "page", { skipMockSetup: true });
+
+    fireEvent.click(screen.getByRole("button", { name: /加入技能集/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("collection-picker-dialog")).toHaveAttribute(
+        "data-current-collection-ids",
+        "frontend,design-system"
+      );
     });
   });
 

@@ -25,7 +25,7 @@ import { AI_PROVIDERS, REGION_LABELS, RegionId } from "@/data/aiProviders";
 
 // ─── App constants ────────────────────────────────────────────────────────────
 
-const APP_VERSION = "0.1.0";
+const APP_VERSION = "0.8.0";
 const DB_PATH = "~/.skillsmanage/db.sqlite";
 
 /** Catppuccin Lavender hex per flavor — used for visual preview dots on flavor buttons (default accent). */
@@ -58,7 +58,7 @@ const CTP_VAR_MAP: Record<CatppuccinAccent, string> = {
   lavender: "--ctp-lavender",
 };
 
-const FLAVOR_ORDER: CatppuccinFlavor[] = ["mocha", "frappe", "latte"];
+const FLAVOR_ORDER: CatppuccinFlavor[] = ["mocha", "macchiato", "frappe", "latte"];
 
 // ─── ScanDirectoryRow ─────────────────────────────────────────────────────────
 

@@ -74,10 +74,7 @@ pub async fn add_scan_directory(
 
 /// Tauri command: remove a custom scan directory by path.
 #[tauri::command]
-pub async fn remove_scan_directory(
-    state: State<'_, AppState>,
-    path: String,
-) -> Result<(), String> {
+pub async fn remove_scan_directory(state: State<'_, AppState>, path: String) -> Result<(), String> {
     remove_scan_directory_impl(&state.db, &path).await
 }
 
@@ -162,8 +159,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_scan_directories_returns_added() {
         let pool = setup_test_db().await;
-        add_scan_directory_impl(&pool, "/tmp/proj-a", Some("Project A")).await.unwrap();
-        add_scan_directory_impl(&pool, "/tmp/proj-b", None).await.unwrap();
+        add_scan_directory_impl(&pool, "/tmp/proj-a", Some("Project A"))
+            .await
+            .unwrap();
+        add_scan_directory_impl(&pool, "/tmp/proj-b", None)
+            .await
+            .unwrap();
 
         let dirs = get_scan_directories_impl(&pool).await.unwrap();
         // N built-in dirs are already there; we added 2 custom ones.
@@ -186,13 +187,18 @@ mod tests {
         assert_eq!(dir.path, "/tmp/my-project");
         assert_eq!(dir.label.as_deref(), Some("My Project"));
         assert!(dir.is_active);
-        assert!(!dir.is_builtin, "Newly added directory should not be built-in");
+        assert!(
+            !dir.is_builtin,
+            "Newly added directory should not be built-in"
+        );
     }
 
     #[tokio::test]
     async fn test_add_scan_directory_without_label() {
         let pool = setup_test_db().await;
-        let dir = add_scan_directory_impl(&pool, "/tmp/no-label", None).await.unwrap();
+        let dir = add_scan_directory_impl(&pool, "/tmp/no-label", None)
+            .await
+            .unwrap();
         assert!(dir.label.is_none());
     }
 
@@ -206,9 +212,14 @@ mod tests {
     #[tokio::test]
     async fn test_add_scan_directory_duplicate_path_fails() {
         let pool = setup_test_db().await;
-        add_scan_directory_impl(&pool, "/tmp/same-path", None).await.unwrap();
+        add_scan_directory_impl(&pool, "/tmp/same-path", None)
+            .await
+            .unwrap();
         let result = add_scan_directory_impl(&pool, "/tmp/same-path", None).await;
-        assert!(result.is_err(), "Duplicate path should fail (UNIQUE constraint)");
+        assert!(
+            result.is_err(),
+            "Duplicate path should fail (UNIQUE constraint)"
+        );
     }
 
     // ── remove_scan_directory_impl ────────────────────────────────────────────
@@ -216,14 +227,22 @@ mod tests {
     #[tokio::test]
     async fn test_remove_scan_directory_success() {
         let pool = setup_test_db().await;
-        add_scan_directory_impl(&pool, "/tmp/removable", None).await.unwrap();
+        add_scan_directory_impl(&pool, "/tmp/removable", None)
+            .await
+            .unwrap();
 
-        remove_scan_directory_impl(&pool, "/tmp/removable").await.unwrap();
+        remove_scan_directory_impl(&pool, "/tmp/removable")
+            .await
+            .unwrap();
 
         let dirs = get_scan_directories_impl(&pool).await.unwrap();
         // Built-in dirs remain; only the custom /tmp/removable should be gone.
         let builtin_count = expected_builtin_count();
-        assert_eq!(dirs.len(), builtin_count, "Only the custom directory should be removed");
+        assert_eq!(
+            dirs.len(),
+            builtin_count,
+            "Only the custom directory should be removed"
+        );
         assert!(
             !dirs.iter().any(|d| d.path == "/tmp/removable"),
             "Removed directory must not appear in the list"
@@ -234,7 +253,10 @@ mod tests {
     async fn test_remove_nonexistent_scan_directory_fails() {
         let pool = setup_test_db().await;
         let result = remove_scan_directory_impl(&pool, "/nonexistent/path").await;
-        assert!(result.is_err(), "Removing a nonexistent directory should fail");
+        assert!(
+            result.is_err(),
+            "Removing a nonexistent directory should fail"
+        );
     }
 
     #[tokio::test]
@@ -258,8 +280,12 @@ mod tests {
     #[tokio::test]
     async fn test_set_scan_directory_active_disables() {
         let pool = setup_test_db().await;
-        add_scan_directory_impl(&pool, "/tmp/toggle-me", None).await.unwrap();
-        set_scan_directory_active_impl(&pool, "/tmp/toggle-me", false).await.unwrap();
+        add_scan_directory_impl(&pool, "/tmp/toggle-me", None)
+            .await
+            .unwrap();
+        set_scan_directory_active_impl(&pool, "/tmp/toggle-me", false)
+            .await
+            .unwrap();
         let dirs = get_scan_directories_impl(&pool).await.unwrap();
         let dir = dirs.iter().find(|d| d.path == "/tmp/toggle-me").unwrap();
         assert!(!dir.is_active, "Directory should be inactive");
@@ -268,11 +294,17 @@ mod tests {
     #[tokio::test]
     async fn test_set_scan_directory_active_enables() {
         let pool = setup_test_db().await;
-        add_scan_directory_impl(&pool, "/tmp/re-enable-me", None).await.unwrap();
+        add_scan_directory_impl(&pool, "/tmp/re-enable-me", None)
+            .await
+            .unwrap();
         // First disable
-        set_scan_directory_active_impl(&pool, "/tmp/re-enable-me", false).await.unwrap();
+        set_scan_directory_active_impl(&pool, "/tmp/re-enable-me", false)
+            .await
+            .unwrap();
         // Then re-enable
-        set_scan_directory_active_impl(&pool, "/tmp/re-enable-me", true).await.unwrap();
+        set_scan_directory_active_impl(&pool, "/tmp/re-enable-me", true)
+            .await
+            .unwrap();
         let dirs = get_scan_directories_impl(&pool).await.unwrap();
         let dir = dirs.iter().find(|d| d.path == "/tmp/re-enable-me").unwrap();
         assert!(dir.is_active, "Directory should be active again");
@@ -305,7 +337,11 @@ mod tests {
         set_setting_impl(&pool, "lang", "zh").await.unwrap();
 
         let value = get_setting_impl(&pool, "lang").await.unwrap();
-        assert_eq!(value.as_deref(), Some("zh"), "Second set should overwrite first");
+        assert_eq!(
+            value.as_deref(),
+            Some("zh"),
+            "Second set should overwrite first"
+        );
     }
 
     #[tokio::test]
@@ -322,9 +358,18 @@ mod tests {
         set_setting_impl(&pool, "b", "2").await.unwrap();
         set_setting_impl(&pool, "c", "3").await.unwrap();
 
-        assert_eq!(get_setting_impl(&pool, "a").await.unwrap().as_deref(), Some("1"));
-        assert_eq!(get_setting_impl(&pool, "b").await.unwrap().as_deref(), Some("2"));
-        assert_eq!(get_setting_impl(&pool, "c").await.unwrap().as_deref(), Some("3"));
+        assert_eq!(
+            get_setting_impl(&pool, "a").await.unwrap().as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            get_setting_impl(&pool, "b").await.unwrap().as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            get_setting_impl(&pool, "c").await.unwrap().as_deref(),
+            Some("3")
+        );
     }
 
     #[tokio::test]
