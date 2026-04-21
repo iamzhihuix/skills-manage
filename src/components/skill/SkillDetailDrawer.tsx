@@ -14,6 +14,8 @@ import { cn } from "@/lib/utils";
 export interface SkillDetailDrawerProps {
   open: boolean;
   skillId: string | null;
+  agentId?: string | null;
+  rowId?: string | null;
   onOpenChange: (open: boolean) => void;
   returnFocusRef?: RefObject<HTMLElement | null>;
   children?: ReactNode;
@@ -26,6 +28,8 @@ export interface SkillDetailDrawerProps {
 export function SkillDetailDrawer({
   open,
   skillId,
+  agentId,
+  rowId,
   onOpenChange,
   returnFocusRef,
   children,
@@ -79,6 +83,8 @@ export function SkillDetailDrawer({
               ? (children ?? (
                   <SkillDetailView
                     skillId={skillId ?? undefined}
+                    agentId={agentId ?? undefined}
+                    rowId={rowId ?? undefined}
                     filePath={filePath ?? undefined}
                     discoverMetadata={discoverMetadata ?? undefined}
                     variant="drawer"

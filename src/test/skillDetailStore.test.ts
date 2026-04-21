@@ -22,13 +22,20 @@ import { useSkillDetailStore } from "../stores/skillDetailStore";
 
 const mockDetail: SkillDetail = {
   id: "frontend-design",
+  row_id: "frontend-design",
   name: "frontend-design",
   description: "Build distinctive, production-grade frontend interfaces",
   file_path: "~/.agents/skills/frontend-design/SKILL.md",
+  dir_path: "~/.agents/skills/frontend-design",
   canonical_path: "~/.agents/skills/frontend-design",
   is_central: true,
   source: "native",
   scanned_at: "2026-04-09T00:00:00Z",
+  source_kind: null,
+  source_root: null,
+  is_read_only: false,
+  conflict_group: null,
+  conflict_count: 0,
   installations: [
     {
       skill_id: "frontend-design",
@@ -98,15 +105,29 @@ describe("skillDetailStore", () => {
 
   it("calls get_skill_detail with skillId", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(mockDetail).mockResolvedValueOnce(mockContent);
-    await useSkillDetailStore.getState().loadDetail("frontend-design");
+    await useSkillDetailStore.getState().loadDetail({ skillId: "frontend-design" });
     expect(invoke).toHaveBeenCalledWith("get_skill_detail", {
       skillId: "frontend-design",
     });
   });
 
+  it("passes agentId and rowId when loading a source-aware Claude row", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(mockDetail).mockResolvedValueOnce(mockContent);
+    await useSkillDetailStore.getState().loadDetail({
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::marketplace::frontend-design",
+    });
+    expect(invoke).toHaveBeenCalledWith("get_skill_detail", {
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::marketplace::frontend-design",
+    });
+  });
+
   it("calls read_skill_content with skillId", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(mockDetail).mockResolvedValueOnce(mockContent);
-    await useSkillDetailStore.getState().loadDetail("frontend-design");
+    await useSkillDetailStore.getState().loadDetail({ skillId: "frontend-design" });
     expect(invoke).toHaveBeenCalledWith("read_skill_content", {
       skillId: "frontend-design",
     });
@@ -114,7 +135,7 @@ describe("skillDetailStore", () => {
 
   it("stores detail and content after successful load", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(mockDetail).mockResolvedValueOnce(mockContent);
-    await useSkillDetailStore.getState().loadDetail("frontend-design");
+    await useSkillDetailStore.getState().loadDetail({ skillId: "frontend-design" });
     const state = useSkillDetailStore.getState();
     expect(state.detail).toEqual(mockDetail);
     expect(state.content).toBe(mockContent);
@@ -128,7 +149,7 @@ describe("skillDetailStore", () => {
       .mockReturnValueOnce(new Promise<SkillDetail>((r) => (resolveDetail = r)))
       .mockResolvedValueOnce(mockContent);
 
-    const fetchPromise = useSkillDetailStore.getState().loadDetail("frontend-design");
+    const fetchPromise = useSkillDetailStore.getState().loadDetail({ skillId: "frontend-design" });
     expect(useSkillDetailStore.getState().isLoading).toBe(true);
 
     resolveDetail(mockDetail);
@@ -139,7 +160,7 @@ describe("skillDetailStore", () => {
 
   it("sets error and clears loading when load fails", async () => {
     vi.mocked(invoke).mockRejectedValueOnce(new Error("Skill not found"));
-    await useSkillDetailStore.getState().loadDetail("nonexistent");
+    await useSkillDetailStore.getState().loadDetail({ skillId: "nonexistent" });
     const state = useSkillDetailStore.getState();
     expect(state.error).toContain("Skill not found");
     expect(state.isLoading).toBe(false);
@@ -252,11 +273,52 @@ describe("skillDetailStore", () => {
     expect(state.isLoading).toBe(false);
   });
 
+  it("refreshInstallations reuses the active Claude row identity after a row-aware load", async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(mockDetail)
+      .mockResolvedValueOnce(mockContent)
+      .mockResolvedValueOnce(mockDetailAfterInstall);
+
+    await useSkillDetailStore.getState().loadDetail({
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::user::frontend-design",
+    });
+    await useSkillDetailStore.getState().refreshInstallations("frontend-design");
+
+    expect(invoke).toHaveBeenLastCalledWith("get_skill_detail", {
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::user::frontend-design",
+    });
+  });
+
+  it("reloads install mutations against the active Claude row identity", async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(mockDetail)
+      .mockResolvedValueOnce(mockContent)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(mockDetailAfterInstall);
+
+    await useSkillDetailStore.getState().loadDetail({
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::user::frontend-design",
+    });
+    await useSkillDetailStore.getState().installSkill("frontend-design", "cursor");
+
+    expect(invoke).toHaveBeenLastCalledWith("get_skill_detail", {
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::user::frontend-design",
+    });
+  });
+
   // ── reset ─────────────────────────────────────────────────────────────────
 
   it("resets store to initial state", async () => {
     vi.mocked(invoke).mockResolvedValueOnce(mockDetail).mockResolvedValueOnce(mockContent);
-    await useSkillDetailStore.getState().loadDetail("frontend-design");
+    await useSkillDetailStore.getState().loadDetail({ skillId: "frontend-design" });
     // Now reset
     useSkillDetailStore.getState().reset();
     const state = useSkillDetailStore.getState();

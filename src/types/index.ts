@@ -35,6 +35,7 @@ export interface ScanResult {
 
 export interface ScannedSkill {
   id: string;
+  row_id?: string;
   name: string;
   description?: string;
   file_path: string;
@@ -42,6 +43,11 @@ export interface ScannedSkill {
   link_type: string;
   symlink_target?: string;
   is_central: boolean;
+  source_kind?: string | null;
+  source_root?: string | null;
+  is_read_only?: boolean;
+  conflict_group?: string | null;
+  conflict_count?: number;
 }
 
 // ─── Skill Types ──────────────────────────────────────────────────────────────
@@ -69,9 +75,22 @@ export interface SkillInstallation {
 }
 
 export interface SkillDetail extends Omit<Skill, "content"> {
+  row_id?: string;
+  dir_path?: string;
+  source_kind?: string | null;
+  source_root?: string | null;
+  is_read_only?: boolean;
+  conflict_group?: string | null;
+  conflict_count?: number;
   installations: SkillInstallation[];
   /** Collections this skill currently belongs to. */
   collections?: Collection[];
+}
+
+export interface SkillDetailRequest {
+  skillId: string;
+  agentId?: string;
+  rowId?: string;
 }
 
 export interface SkillWithLinks {
@@ -83,6 +102,8 @@ export interface SkillWithLinks {
   is_central: boolean;
   source?: string;
   scanned_at: string;
+  created_at?: string;
+  updated_at?: string;
   /** Agent IDs that currently have this skill installed (symlink or copy). */
   linked_agents: string[];
 }

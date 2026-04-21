@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Ref, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
@@ -23,7 +23,7 @@ import { parseFrontmatter } from "@/lib/frontmatter";
 import { useSkillDetailStore } from "@/stores/skillDetailStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { CollectionPickerDialog } from "@/components/collection/CollectionPickerDialog";
-import { AgentWithStatus, SkillInstallation } from "@/types";
+import { AgentWithStatus, SkillDetailRequest, SkillInstallation } from "@/types";
 import { cn } from "@/lib/utils";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 
@@ -183,6 +183,10 @@ export interface DiscoverMetadata {
 export interface SkillDetailViewProps {
   /** The skill id to load from DB. Required for central skills. */
   skillId?: string;
+  /** Optional platform context for source-aware detail loading. */
+  agentId?: string;
+  /** Optional stable row identity for duplicate platform rows. */
+  rowId?: string;
   /** Direct file path to load content from. Used for discover non-central skills. */
   filePath?: string;
   /** Metadata for discover non-central skills (shown in sidebar). */
@@ -201,6 +205,8 @@ export interface SkillDetailViewProps {
 
 export function SkillDetailView({
   skillId,
+  agentId,
+  rowId,
   filePath,
   discoverMetadata,
   variant,
@@ -241,6 +247,10 @@ export function SkillDetailView({
   const [fileIsLoading, setFileIsLoading] = useState(false);
   const [fileExplanation, setFileExplanation] = useState<string | null>(null);
   const [fileIsExplaining, setFileIsExplaining] = useState(false);
+  const detailRequest = useMemo<SkillDetailRequest | null>(
+    () => (skillId ? { skillId, agentId, rowId } : null),
+    [skillId, agentId, rowId]
+  );
 
   // Unified accessors
   const content = isFileMode ? fileContent : storeContent;
@@ -279,19 +289,19 @@ export function SkillDetailView({
 
   // ── Store mode: load detail by skillId ────────────────────────────────
   useEffect(() => {
-    if (skillId) {
-      loadDetail(skillId);
+    if (detailRequest) {
+      loadDetail(detailRequest);
     }
     return () => {
       reset();
     };
-  }, [skillId, loadDetail, reset]);
+  }, [detailRequest, loadDetail, reset]);
 
   useEffect(() => {
-    if (skillId && storeContent) {
-      loadCachedExplanation(skillId, i18n.language);
+    if (detailRequest?.skillId && storeContent) {
+      loadCachedExplanation(detailRequest.skillId, i18n.language);
     }
-  }, [skillId, storeContent, i18n.language, loadCachedExplanation]);
+  }, [detailRequest, storeContent, i18n.language, loadCachedExplanation]);
 
   // ── Derived values ───────────────────────────────────────────────────────
 
@@ -329,8 +339,8 @@ export function SkillDetailView({
   }
 
   function handleCollectionAdded() {
-    if (skillId) {
-      loadDetail(skillId);
+    if (detailRequest) {
+      loadDetail(detailRequest);
     }
   }
 
@@ -383,7 +393,7 @@ export function SkillDetailView({
   const isBrowserFallback = !isTauriRuntime() && !isLoading && !detail && !error && !isFileMode;
   const effectiveName = isFileMode
     ? (discoverMetadata?.name ?? "")
-    : (detail?.name ?? skillId ?? "");
+    : (detail?.name ?? detailRequest?.skillId ?? "");
   const effectiveDescription = isFileMode
     ? discoverMetadata?.description
     : detail?.description;
@@ -427,7 +437,7 @@ export function SkillDetailView({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => skillId && loadDetail(skillId)}
+                onClick={() => detailRequest && loadDetail(detailRequest)}
               >
                 {t("detail.retry")}
               </Button>

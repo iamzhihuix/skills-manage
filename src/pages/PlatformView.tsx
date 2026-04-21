@@ -11,7 +11,7 @@ import { UnifiedSkillCard } from "@/components/skill/UnifiedSkillCard";
 import { SkillDetailDrawer } from "@/components/skill/SkillDetailDrawer";
 import { PlatformIcon } from "@/components/platform/PlatformIcon";
 import { InstallDialog } from "@/components/central/InstallDialog";
-import { SkillWithLinks } from "@/types";
+import { ScannedSkill, SkillWithLinks } from "@/types";
 
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ export function PlatformView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [installTargetSkill, setInstallTargetSkill] = useState<SkillWithLinks | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [drawerSkillId, setDrawerSkillId] = useState<string | null>(null);
+  const [drawerSkill, setDrawerSkill] = useState<ScannedSkill | null>(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const detailButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -57,6 +57,11 @@ export function PlatformView() {
       getSkillsByAgent(agentId);
     }
   }, [agentId, getSkillsByAgent]);
+
+  useEffect(() => {
+    if (!contentRef.current) return;
+    contentRef.current.scrollTop = 0;
+  }, [agentId]);
 
   // Ensure central skills are loaded so we can resolve SkillWithLinks for InstallDialog.
   useEffect(() => {
@@ -111,12 +116,16 @@ export function PlatformView() {
     );
   }, [skills, searchQuery]);
 
-  function setDetailButtonRef(skillId: string, node: HTMLButtonElement | null) {
-    detailButtonRefs.current[skillId] = node;
+  function getSkillRowKey(skill: ScannedSkill) {
+    return skill.row_id ?? skill.id;
   }
 
-  function handleOpenDrawer(skillId: string) {
-    setDrawerSkillId(skillId);
+  function setDetailButtonRef(rowKey: string, node: HTMLButtonElement | null) {
+    detailButtonRefs.current[rowKey] = node;
+  }
+
+  function handleOpenDrawer(skill: ScannedSkill) {
+    setDrawerSkill(skill);
     setIsDrawerOpen(true);
   }
 
@@ -170,13 +179,13 @@ export function PlatformView() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {filteredSkills.map((skill) => (
               <UnifiedSkillCard
-                key={skill.id}
+                key={getSkillRowKey(skill)}
                 name={skill.name}
                 description={skill.description}
-                sourceType={skill.link_type as "symlink" | "copy"}
-                onDetail={() => handleOpenDrawer(skill.id)}
+                sourceType={skill.link_type as "symlink" | "copy" | "native"}
+                onDetail={() => handleOpenDrawer(skill)}
                 onInstallTo={() => handleInstallClick(skill.id)}
-                detailButtonRef={(node) => setDetailButtonRef(skill.id, node)}
+                detailButtonRef={(node) => setDetailButtonRef(getSkillRowKey(skill), node)}
               />
             ))}
           </div>
@@ -194,17 +203,19 @@ export function PlatformView() {
 
       <SkillDetailDrawer
         open={isDrawerOpen}
-        skillId={drawerSkillId}
+        skillId={drawerSkill?.id ?? null}
+        agentId={agentId ?? null}
+        rowId={drawerSkill?.row_id ?? null}
         onOpenChange={(open) => {
           setIsDrawerOpen(open);
           if (!open) {
-            setDrawerSkillId(null);
+            setDrawerSkill(null);
           }
         }}
         returnFocusRef={
-          drawerSkillId
+          drawerSkill
             ? {
-                current: detailButtonRefs.current[drawerSkillId] ?? null,
+                current: detailButtonRefs.current[getSkillRowKey(drawerSkill)] ?? null,
               }
             : undefined
         }

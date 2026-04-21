@@ -98,13 +98,20 @@ const mockAgents: AgentWithStatus[] = [
 
 const mockDetail: SkillDetailType = {
   id: "frontend-design",
+  row_id: "frontend-design",
   name: "frontend-design",
   description: "Build distinctive, production-grade frontend interfaces",
   file_path: "~/.agents/skills/frontend-design/SKILL.md",
+  dir_path: "~/.agents/skills/frontend-design",
   canonical_path: "~/.agents/skills/frontend-design",
   is_central: true,
   source: "native",
   scanned_at: "2026-04-09T00:00:00Z",
+  source_kind: null,
+  source_root: null,
+  is_read_only: false,
+  conflict_group: null,
+  conflict_count: 0,
   collections: [],
   installations: [
     {
@@ -692,7 +699,61 @@ describe("SkillDetailView", () => {
 
   it("calls loadDetail on mount with skillId prop", () => {
     renderView("frontend-design");
-    expect(mockLoadDetail).toHaveBeenCalledWith("frontend-design");
+    expect(mockLoadDetail).toHaveBeenCalledWith({
+      skillId: "frontend-design",
+      agentId: undefined,
+      rowId: undefined,
+    });
+  });
+
+  it("passes source-aware Claude row identity into loadDetail when provided", () => {
+    applyStoreMocks();
+    render(
+      <MemoryRouter>
+        <SkillDetailView
+          skillId="frontend-design"
+          agentId="claude-code"
+          rowId="claude-code::marketplace::frontend-design"
+          variant="drawer"
+        />
+      </MemoryRouter>
+    );
+
+    expect(mockLoadDetail).toHaveBeenCalledWith({
+      skillId: "frontend-design",
+      agentId: "claude-code",
+      rowId: "claude-code::marketplace::frontend-design",
+    });
+  });
+
+  it("retries a failed Claude duplicate detail load with the same row identity", async () => {
+    applyStoreMocks({
+      detail: null,
+      content: null,
+      error: "Multiple Claude rows found",
+    });
+
+    render(
+      <MemoryRouter>
+        <SkillDetailView
+          skillId="frontend-design"
+          agentId="claude-code"
+          rowId="claude-code::user::frontend-design"
+          variant="drawer"
+        />
+      </MemoryRouter>
+    );
+
+    mockLoadDetail.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: /重试/i }));
+
+    await waitFor(() => {
+      expect(mockLoadDetail).toHaveBeenCalledWith({
+        skillId: "frontend-design",
+        agentId: "claude-code",
+        rowId: "claude-code::user::frontend-design",
+      });
+    });
   });
 
   it("calls reset on unmount", () => {
@@ -809,7 +870,11 @@ describe("SkillDetailView", () => {
     fireEvent.click(screen.getByRole("button", { name: /Confirm add to collection/i }));
 
     await waitFor(() => {
-      expect(mockLoadDetail).toHaveBeenCalledWith("frontend-design");
+      expect(mockLoadDetail).toHaveBeenCalledWith({
+        skillId: "frontend-design",
+        agentId: undefined,
+        rowId: undefined,
+      });
     });
   });
 });
