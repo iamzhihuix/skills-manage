@@ -1,6 +1,6 @@
 {
   "milestone": "claude-backend-foundation",
-  "round": 1,
+  "round": 2,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -25,35 +25,38 @@
     }
   },
   "reviewsSummary": {
-    "total": 3,
+    "total": 1,
     "passed": 0,
-    "failed": 3,
+    "failed": 1,
     "failedFeatures": [
-      "claude-source-root-discovery",
-      "claude-source-aware-observation-storage",
-      "claude-source-aware-platform-detail-api"
+      "claude-row-id-detail-compatibility-fix"
     ]
   },
   "notes": [
-    "The root-discovery and observation-storage reviews each found blocking issues in their reviewed commits, but those storage/query problems were superseded by later milestone commits. The remaining active blocker is the row_id compatibility break reported on claude-source-aware-platform-detail-api."
+    "Round 2 re-reviewed the follow-up fix for the prior `row_id` blocker. The backend compatibility error is resolved, but the detail content pane still loads by plain `skillId`, so duplicate Claude detail is still not fully source-aware.",
+    "The remaining blocker now sits in the fix feature: metadata requests are row-aware, but SKILL.md content is still fetched through `read_skill_content({ skillId })` instead of the selected row path."
   ],
   "blockingIssues": [
     {
-      "featureId": "claude-source-aware-platform-detail-api",
+      "featureId": "claude-row-id-detail-compatibility-fix",
       "severity": "blocking",
-      "description": "Commit 2eae38e makes duplicate Claude detail requests require row_id, but the committed callers still open/load detail by plain skillId only (`src/pages/PlatformView.tsx`, `src/components/skill/SkillDetailView.tsx`, `src/stores/skillDetailStore.ts`). Opening a duplicate Claude row therefore fails instead of preserving source-specific detail state."
+      "description": "`src/stores/skillDetailStore.ts:187` still loads content with `read_skill_content({ skillId })` after fetching row-aware detail. Because `src-tauri/src/commands/skills.rs:357-366` resolves content through `db::get_skill_by_id`, duplicate Claude rows still collapse onto the manageable/canonical file, and marketplace-only survivors can still fail content loading. The selected detail row must instead load content from its resolved path (for example via `read_file_by_path(detail.file_path)`) to preserve source-aware detail behavior."
     }
   ],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
-      "target": ".factory/skills/claude-scan-backend-worker/SKILL.md",
-      "suggestion": "When backend IPC payloads change, require the worker to also run the frontend-targeted tests plus `pnpm typecheck` and `pnpm lint`, not just Rust-targeted tests and clippy.",
-      "evidence": "The review for `claude-source-aware-platform-detail-api` found a committed backend contract change that breaks existing frontend callers, and the mission guidance/services manifest already required frontend-targeted validation for these payload changes.",
-      "isSystemic": true
+      "target": ".factory/skills/claude-scan-frontend-worker/SKILL.md",
+      "suggestion": "For fix follow-ups and reruns, require the worker to reread any mission library notes added after the original failure when those notes document the exact API or contract they are repairing.",
+      "evidence": "The review for `claude-row-id-detail-compatibility-fix` found that `.factory/library/claude-source-aware-detail-api.md` already documented the required `read_file_by_path(detail.file_path)` follow-up, but the frontend worker skill only mandated a fixed startup reading list and the fix still used `read_skill_content({ skillId })`.",
+      "isSystemic": false
     }
   ],
   "rejectedObservations": [
+    {
+      "observation": "The backend worker skill/procedure lacks frontend-targeted validation guidance for IPC payload changes.",
+      "reason": "already-addressed: `.factory/skills/claude-scan-backend-worker/SKILL.md` now explicitly requires `test-frontend-targeted`, `typecheck`, and `lint` when frontend-consumed payloads change."
+    },
     {
       "observation": "The backend worker skill/procedure lacks guidance for producing a scoped feature commit when the shared mission workspace is already dirty from unrelated work.",
       "reason": "already-documented in mission AGENTS.md, which already tells workers not to clean/stash unrelated dirty files and to commit only feature-owned files."
@@ -63,5 +66,5 @@
       "reason": "feature-specific reviewer feedback rather than a durable shared-state rule or repository knowledge update."
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/claude-backend-foundation/scrutiny/synthesis.round1.json"
 }

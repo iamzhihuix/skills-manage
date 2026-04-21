@@ -1,0 +1,28 @@
+{
+  "featureId": "claude-row-id-detail-compatibility-fix",
+  "reviewedAt": "2026-04-21T15:40:47.649467Z",
+  "commitId": "f45653453f7b7e2c10ca4a28ac9b30f3dc8bfddc",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix correctly threads Claude `row_id` into the drawer/detail request path, so duplicate detail opens no longer fail immediately with the backend's `row_id is required` error. But the implementation only makes the metadata request row-aware: the store still loads SKILL.md content by plain `skillId`, which collapses duplicate Claude rows back onto the manageable/canonical file and can still fail for marketplace-only survivors. The original blocking failure is therefore only partially fixed.",
+    "issues": [
+      {
+        "file": "src/stores/skillDetailStore.ts",
+        "line": 187,
+        "severity": "blocking",
+        "description": "`loadDetail` now passes `{ skillId, agentId, rowId }` to `get_skill_detail`, but it still fetches content with `read_skill_content({ skillId })` instead of reading the selected row's `detail.file_path`. The backend helper at `src-tauri/src/commands/skills.rs:357-366` resolves `read_skill_content` through `db::get_skill_by_id`, so duplicate Claude rows still share the manageable skill file instead of the chosen observation row. That means opening the marketplace copy of a duplicated Claude skill can still show the user/canonical SKILL.md, violating the source-aware detail contract in `.factory/library/claude-source-aware-detail-api.md:32` and the content-pane requirement in `validation-contract.md:67-80`. It also leaves a hard failure mode when only a marketplace observation survives, because scanner intentionally removes the manageable skill row in that case (`src-tauri/src/commands/scanner.rs:1395-1397`), causing `read_skill_content` to error even though `get_skill_detail` can still resolve the observation."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The frontend worker skill does not tell follow-up workers to reread newly added mission library notes, which let this fix miss the documented `read_file_by_path(detail.file_path)` requirement for source-aware Claude detail content.",
+      "evidence": "`.factory/skills/claude-scan-frontend-worker/SKILL.md:25-40` only requires reading `architecture.md`, `claude-platform-scan.md`, and `user-testing.md`, while `.factory/library/claude-source-aware-detail-api.md:32` records the missing frontend follow-up. The fix transcript skeleton for session `7298215a-a3e4-4fbf-8165-b88d284244b3` shows no read of that library file, and the resulting code in `src/stores/skillDetailStore.ts:185-187` still uses `read_skill_content({ skillId })`."
+    }
+  ],
+  "addressesFailureFrom": "claude-source-aware-platform-detail-api",
+  "summary": "Fail: the fix repairs row-aware `get_skill_detail` calls, but duplicate Claude detail still is not fully source-aware because SKILL.md content is fetched by plain `skillId`. Marketplace duplicate rows can therefore display the wrong content, and marketplace-only survivors can still fail content loading."
+}

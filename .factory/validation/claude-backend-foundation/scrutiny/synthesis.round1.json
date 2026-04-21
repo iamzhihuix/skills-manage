@@ -1,0 +1,67 @@
+{
+  "milestone": "claude-backend-foundation",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "pnpm --dir \"/Users/happypeet/Documents/GitHubMe/skills-manage\" exec vitest run src/test/platformStore.test.ts src/test/PlatformView.test.tsx src/test/SkillDetailView.test.tsx src/test/skillDetailStore.test.ts && cargo test --manifest-path \"/Users/happypeet/Documents/GitHubMe/skills-manage/src-tauri/Cargo.toml\" scanner::tests:: && cargo test --manifest-path \"/Users/happypeet/Documents/GitHubMe/skills-manage/src-tauri/Cargo.toml\" skills::tests:: && cargo test --manifest-path \"/Users/happypeet/Documents/GitHubMe/skills-manage/src-tauri/Cargo.toml\" linker::tests::",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "pnpm --dir \"/Users/happypeet/Documents/GitHubMe/skills-manage\" typecheck",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "pnpm --dir \"/Users/happypeet/Documents/GitHubMe/skills-manage\" lint",
+      "exitCode": 0
+    },
+    "clippy": {
+      "passed": true,
+      "command": "cargo clippy --manifest-path \"/Users/happypeet/Documents/GitHubMe/skills-manage/src-tauri/Cargo.toml\" -- -D warnings",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 0,
+    "failed": 3,
+    "failedFeatures": [
+      "claude-source-root-discovery",
+      "claude-source-aware-observation-storage",
+      "claude-source-aware-platform-detail-api"
+    ]
+  },
+  "notes": [
+    "The root-discovery and observation-storage reviews each found blocking issues in their reviewed commits, but those storage/query problems were superseded by later milestone commits. The remaining active blocker is the row_id compatibility break reported on claude-source-aware-platform-detail-api."
+  ],
+  "blockingIssues": [
+    {
+      "featureId": "claude-source-aware-platform-detail-api",
+      "severity": "blocking",
+      "description": "Commit 2eae38e makes duplicate Claude detail requests require row_id, but the committed callers still open/load detail by plain skillId only (`src/pages/PlatformView.tsx`, `src/components/skill/SkillDetailView.tsx`, `src/stores/skillDetailStore.ts`). Opening a duplicate Claude row therefore fails instead of preserving source-specific detail state."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": ".factory/skills/claude-scan-backend-worker/SKILL.md",
+      "suggestion": "When backend IPC payloads change, require the worker to also run the frontend-targeted tests plus `pnpm typecheck` and `pnpm lint`, not just Rust-targeted tests and clippy.",
+      "evidence": "The review for `claude-source-aware-platform-detail-api` found a committed backend contract change that breaks existing frontend callers, and the mission guidance/services manifest already required frontend-targeted validation for these payload changes.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The backend worker skill/procedure lacks guidance for producing a scoped feature commit when the shared mission workspace is already dirty from unrelated work.",
+      "reason": "already-documented in mission AGENTS.md, which already tells workers not to clean/stash unrelated dirty files and to commit only feature-owned files."
+    },
+    {
+      "observation": "The worker marked `followedProcedure` true even though the reviewed feature stored `row_id` internally without exposing it on the reviewed API surface.",
+      "reason": "feature-specific reviewer feedback rather than a durable shared-state rule or repository knowledge update."
+    }
+  ],
+  "previousRound": null
+}
