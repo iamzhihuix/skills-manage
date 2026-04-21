@@ -4,7 +4,7 @@ use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions},
     FromRow, Row, SqlitePool,
 };
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use uuid::Uuid;
 
 pub type DbPool = SqlitePool;
@@ -966,6 +966,8 @@ pub async fn get_skills_by_agent(pool: &DbPool, agent_id: &str) -> Result<Vec<Sk
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SkillForAgent {
     pub id: String,
+    /// Stable row identity for list/detail routing.
+    pub row_id: String,
     pub name: String,
     pub description: Option<String>,
     /// Absolute path to the `SKILL.md` file.
@@ -978,11 +980,17 @@ pub struct SkillForAgent {
     /// Symlink target path, if `link_type` is "symlink".
     pub symlink_target: Option<String>,
     pub is_central: bool,
+    pub source_kind: Option<String>,
+    pub source_root: Option<String>,
+    pub is_read_only: bool,
+    pub conflict_group: Option<String>,
+    pub conflict_count: i64,
 }
 
 fn observation_to_skill_for_agent(observation: AgentSkillObservation) -> SkillForAgent {
     SkillForAgent {
         id: observation.skill_id,
+        row_id: observation.row_id,
         name: observation.name,
         description: observation.description,
         file_path: observation.file_path,
@@ -990,7 +998,16 @@ fn observation_to_skill_for_agent(observation: AgentSkillObservation) -> SkillFo
         link_type: observation.link_type,
         symlink_target: observation.symlink_target,
         is_central: false,
+        source_kind: Some(observation.source_kind),
+        source_root: Some(observation.source_root),
+        is_read_only: observation.is_read_only,
+        conflict_group: None,
+        conflict_count: 0,
     }
+}
+
+fn claude_conflict_group(agent_id: &str, skill_id: &str) -> String {
+    format!("{agent_id}::{skill_id}")
 }
 
 /// Retrieve skills installed for a given agent, enriched with installation
@@ -1003,19 +1020,46 @@ pub async fn get_skills_for_agent(
     if agent_id == "claude-code" {
         let observations = get_agent_skill_observations(pool, agent_id).await?;
         if !observations.is_empty() {
+            let mut conflict_counts: HashMap<String, i64> = HashMap::new();
+            for observation in &observations {
+                *conflict_counts
+                    .entry(observation.skill_id.clone())
+                    .or_insert(0) += 1;
+            }
+
             return Ok(observations
                 .into_iter()
-                .map(observation_to_skill_for_agent)
+                .map(|observation| {
+                    let conflict_count = conflict_counts
+                        .get(&observation.skill_id)
+                        .copied()
+                        .unwrap_or(0);
+                    let mut skill = observation_to_skill_for_agent(observation);
+                    if conflict_count > 1 {
+                        skill.conflict_group = Some(claude_conflict_group(agent_id, &skill.id));
+                        skill.conflict_count = conflict_count;
+                    }
+                    skill
+                })
                 .collect());
         }
     }
 
     sqlx::query_as::<_, SkillForAgent>(
-        "SELECT s.id, s.name, s.description, s.file_path,
+        "SELECT s.id,
+                s.id AS row_id,
+                s.name,
+                s.description,
+                s.file_path,
                 si.installed_path AS dir_path,
                 si.link_type,
                 si.symlink_target,
-                s.is_central
+                s.is_central,
+                NULL AS source_kind,
+                NULL AS source_root,
+                0 AS is_read_only,
+                NULL AS conflict_group,
+                0 AS conflict_count
          FROM skills s
          JOIN skill_installations si ON s.id = si.skill_id
          WHERE si.agent_id = ?",

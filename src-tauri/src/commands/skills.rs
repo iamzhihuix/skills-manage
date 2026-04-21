@@ -1,4 +1,8 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
+use std::time::SystemTime;
 use tauri::State;
 
 use crate::db::{self, Collection, DbPool, SkillForAgent};
@@ -18,6 +22,8 @@ pub struct SkillWithLinks {
     pub is_central: bool,
     pub source: Option<String>,
     pub scanned_at: String,
+    pub created_at: String,
+    pub updated_at: String,
     /// Agent IDs that have an installation record for this skill.
     pub linked_agents: Vec<String>,
 }
@@ -41,13 +47,20 @@ pub struct SkillInstallationDetail {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillDetail {
     pub id: String,
+    pub row_id: String,
     pub name: String,
     pub description: Option<String>,
     pub file_path: String,
+    pub dir_path: String,
     pub canonical_path: Option<String>,
     pub is_central: bool,
     pub source: Option<String>,
     pub scanned_at: String,
+    pub source_kind: Option<String>,
+    pub source_root: Option<String>,
+    pub is_read_only: bool,
+    pub conflict_group: Option<String>,
+    pub conflict_count: i64,
     /// All installation records for this skill across agents.
     pub installations: Vec<SkillInstallationDetail>,
     /// Collections this skill currently belongs to.
@@ -55,6 +68,220 @@ pub struct SkillDetail {
 }
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
+
+fn system_time_to_rfc3339(time: SystemTime) -> String {
+    let datetime: DateTime<Utc> = time.into();
+    datetime.to_rfc3339()
+}
+
+fn skill_filesystem_timestamps(skill: &db::Skill) -> (String, String) {
+    let directory_metadata = skill
+        .canonical_path
+        .as_deref()
+        .and_then(|path| std::fs::metadata(path).ok());
+    let file_metadata = std::fs::metadata(&skill.file_path).ok();
+
+    let created_at = directory_metadata
+        .as_ref()
+        .or(file_metadata.as_ref())
+        .and_then(|metadata| metadata.created().ok())
+        .map(system_time_to_rfc3339)
+        .unwrap_or_else(|| skill.scanned_at.clone());
+
+    let updated_at = file_metadata
+        .as_ref()
+        .or(directory_metadata.as_ref())
+        .and_then(|metadata| metadata.modified().ok())
+        .map(system_time_to_rfc3339)
+        .unwrap_or_else(|| skill.scanned_at.clone());
+
+    (created_at, updated_at)
+}
+
+fn skill_dir_path(skill: &db::Skill) -> String {
+    skill
+        .canonical_path
+        .clone()
+        .or_else(|| {
+            Path::new(&skill.file_path)
+                .parent()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| skill.file_path.clone())
+}
+
+fn claude_conflict_group(agent_id: &str, skill_id: &str) -> String {
+    format!("{agent_id}::{skill_id}")
+}
+
+fn claude_conflict_counts(observations: &[db::AgentSkillObservation]) -> HashMap<String, i64> {
+    let mut counts = HashMap::new();
+    for observation in observations {
+        *counts.entry(observation.skill_id.clone()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn claude_conflict_metadata(
+    agent_id: &str,
+    skill_id: &str,
+    counts: &HashMap<String, i64>,
+) -> (Option<String>, i64) {
+    let count = counts.get(skill_id).copied().unwrap_or(0);
+    if count > 1 {
+        (Some(claude_conflict_group(agent_id, skill_id)), count)
+    } else {
+        (None, 0)
+    }
+}
+
+fn installation_details(installations: Vec<db::SkillInstallation>) -> Vec<SkillInstallationDetail> {
+    installations
+        .into_iter()
+        .map(|i| SkillInstallationDetail {
+            skill_id: i.skill_id,
+            agent_id: i.agent_id,
+            installed_path: i.installed_path,
+            link_type: i.link_type,
+            symlink_target: i.symlink_target,
+            installed_at: i.created_at,
+        })
+        .collect()
+}
+
+async fn get_claude_observation_detail(
+    pool: &DbPool,
+    skill_id: &str,
+    agent_id: &str,
+    row_id: Option<&str>,
+) -> Result<Option<SkillDetail>, String> {
+    if agent_id != "claude-code" {
+        return Ok(None);
+    }
+
+    let observations = db::get_agent_skill_observations(pool, agent_id).await?;
+    if observations.is_empty() {
+        return Ok(None);
+    }
+
+    let conflict_counts = claude_conflict_counts(&observations);
+    let matches: Vec<db::AgentSkillObservation> = observations
+        .into_iter()
+        .filter(|observation| observation.skill_id == skill_id)
+        .collect();
+
+    if matches.is_empty() {
+        return Ok(None);
+    }
+
+    let observation = match row_id {
+        Some(row_id) => matches
+            .into_iter()
+            .find(|observation| observation.row_id == row_id)
+            .ok_or_else(|| format!("Claude row '{}' not found for skill '{}'", row_id, skill_id))?,
+        None if matches.len() == 1 => matches.into_iter().next().expect("single match"),
+        None => {
+            return Err(format!(
+                "Multiple Claude rows found for skill '{}'; row_id is required",
+                skill_id
+            ))
+        }
+    };
+
+    let manageable_skill = db::get_skill_by_id(pool, &observation.skill_id).await?;
+    let installations = if observation.is_read_only {
+        Vec::new()
+    } else {
+        installation_details(db::get_skill_installations(pool, &observation.skill_id).await?)
+    };
+    let collections = if observation.is_read_only {
+        Vec::new()
+    } else {
+        db::get_skill_collections(pool, &observation.skill_id).await?
+    };
+    let (conflict_group, conflict_count) =
+        claude_conflict_metadata(agent_id, &observation.skill_id, &conflict_counts);
+
+    Ok(Some(SkillDetail {
+        row_id: observation.row_id,
+        id: observation.skill_id.clone(),
+        name: observation.name,
+        description: observation.description.or_else(|| {
+            manageable_skill
+                .as_ref()
+                .and_then(|skill| skill.description.clone())
+        }),
+        file_path: observation.file_path,
+        dir_path: observation.dir_path,
+        canonical_path: if observation.is_read_only {
+            None
+        } else {
+            manageable_skill
+                .as_ref()
+                .and_then(|skill| skill.canonical_path.clone())
+        },
+        is_central: manageable_skill
+            .as_ref()
+            .map(|skill| skill.is_central)
+            .unwrap_or(false),
+        source: manageable_skill
+            .as_ref()
+            .and_then(|skill| skill.source.clone())
+            .or_else(|| Some(observation.link_type.clone())),
+        scanned_at: observation.scanned_at,
+        source_kind: Some(observation.source_kind),
+        source_root: Some(observation.source_root),
+        is_read_only: observation.is_read_only,
+        conflict_group,
+        conflict_count,
+        installations,
+        collections,
+    }))
+}
+
+async fn get_skill_detail_with_row_impl(
+    pool: &DbPool,
+    skill_id: &str,
+    agent_id: Option<&str>,
+    row_id: Option<&str>,
+) -> Result<SkillDetail, String> {
+    if let Some(agent_id) = agent_id {
+        if let Some(detail) =
+            get_claude_observation_detail(pool, skill_id, agent_id, row_id).await?
+        {
+            return Ok(detail);
+        }
+    }
+
+    let skill = db::get_skill_by_id(pool, skill_id)
+        .await?
+        .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
+
+    let row_id = skill.id.clone();
+    let dir_path = skill_dir_path(&skill);
+    let installations = installation_details(db::get_skill_installations(pool, skill_id).await?);
+    let collections = db::get_skill_collections(pool, skill_id).await?;
+
+    Ok(SkillDetail {
+        row_id,
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        file_path: skill.file_path,
+        dir_path,
+        canonical_path: skill.canonical_path,
+        is_central: skill.is_central,
+        source: skill.source,
+        scanned_at: skill.scanned_at,
+        source_kind: None,
+        source_root: None,
+        is_read_only: false,
+        conflict_group: None,
+        conflict_count: 0,
+        installations,
+        collections,
+    })
+}
 
 /// Testable core implementation of `get_skills_by_agent`.
 ///
@@ -91,6 +318,7 @@ pub async fn get_central_skills(state: State<'_, AppState>) -> Result<Vec<SkillW
     for skill in skills {
         let installations = db::get_skill_installations(&state.db, &skill.id).await?;
         let linked_agents: Vec<String> = installations.into_iter().map(|i| i.agent_id).collect();
+        let (created_at, updated_at) = skill_filesystem_timestamps(&skill);
 
         result.push(SkillWithLinks {
             id: skill.id,
@@ -101,6 +329,8 @@ pub async fn get_central_skills(state: State<'_, AppState>) -> Result<Vec<SkillW
             is_central: skill.is_central,
             source: skill.source,
             scanned_at: skill.scanned_at,
+            created_at,
+            updated_at,
             linked_agents,
         });
     }
@@ -115,37 +345,11 @@ pub async fn get_central_skills(state: State<'_, AppState>) -> Result<Vec<SkillW
 pub async fn get_skill_detail(
     state: State<'_, AppState>,
     skill_id: String,
+    agent_id: Option<String>,
+    row_id: Option<String>,
 ) -> Result<SkillDetail, String> {
-    let skill = db::get_skill_by_id(&state.db, &skill_id)
-        .await?
-        .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
-
-    let installations = db::get_skill_installations(&state.db, &skill_id).await?;
-    let installations: Vec<SkillInstallationDetail> = installations
-        .into_iter()
-        .map(|i| SkillInstallationDetail {
-            skill_id: i.skill_id,
-            agent_id: i.agent_id,
-            installed_path: i.installed_path,
-            link_type: i.link_type,
-            symlink_target: i.symlink_target,
-            installed_at: i.created_at,
-        })
-        .collect();
-    let collections = db::get_skill_collections(&state.db, &skill_id).await?;
-
-    Ok(SkillDetail {
-        id: skill.id,
-        name: skill.name,
-        description: skill.description,
-        file_path: skill.file_path,
-        canonical_path: skill.canonical_path,
-        is_central: skill.is_central,
-        source: skill.source,
-        scanned_at: skill.scanned_at,
-        installations,
-        collections,
-    })
+    get_skill_detail_with_row_impl(&state.db, &skill_id, agent_id.as_deref(), row_id.as_deref())
+        .await
 }
 
 /// Tauri command: read and return the raw content of a skill's `SKILL.md` file.
@@ -439,7 +643,10 @@ mod tests {
             !detail.installations[0].installed_at.is_empty(),
             "installed_at must be set"
         );
-        assert!(detail.collections.is_empty(), "skill should have no collections by default");
+        assert!(
+            detail.collections.is_empty(),
+            "skill should have no collections by default"
+        );
     }
 
     #[tokio::test]
@@ -462,7 +669,8 @@ mod tests {
             .unwrap();
 
         let detail = get_skill_detail_impl(&pool, "detail-skill").await.unwrap();
-        let collection_names: Vec<&str> = detail.collections.iter().map(|c| c.name.as_str()).collect();
+        let collection_names: Vec<&str> =
+            detail.collections.iter().map(|c| c.name.as_str()).collect();
 
         assert_eq!(collection_names, vec!["Alpha", "Beta"]);
     }
@@ -534,6 +742,7 @@ mod tests {
             let installations = db::get_skill_installations(pool, &skill.id).await?;
             let linked_agents: Vec<String> =
                 installations.into_iter().map(|i| i.agent_id).collect();
+            let (created_at, updated_at) = skill_filesystem_timestamps(&skill);
             result.push(SkillWithLinks {
                 id: skill.id,
                 name: skill.name,
@@ -543,6 +752,8 @@ mod tests {
                 is_central: skill.is_central,
                 source: skill.source,
                 scanned_at: skill.scanned_at,
+                created_at,
+                updated_at,
                 linked_agents,
             });
         }
@@ -553,34 +764,7 @@ mod tests {
         pool: &SqlitePool,
         skill_id: &str,
     ) -> Result<SkillDetail, String> {
-        let skill = db::get_skill_by_id(pool, skill_id)
-            .await?
-            .ok_or_else(|| format!("Skill '{}' not found", skill_id))?;
-        let installations = db::get_skill_installations(pool, skill_id).await?;
-        let installations: Vec<SkillInstallationDetail> = installations
-            .into_iter()
-            .map(|i| SkillInstallationDetail {
-                skill_id: i.skill_id,
-                agent_id: i.agent_id,
-                installed_path: i.installed_path,
-                link_type: i.link_type,
-                symlink_target: i.symlink_target,
-                installed_at: i.created_at,
-            })
-            .collect();
-        let collections = db::get_skill_collections(pool, skill_id).await?;
-        Ok(SkillDetail {
-            id: skill.id,
-            name: skill.name,
-            description: skill.description,
-            file_path: skill.file_path,
-            canonical_path: skill.canonical_path,
-            is_central: skill.is_central,
-            source: skill.source,
-            scanned_at: skill.scanned_at,
-            installations,
-            collections,
-        })
+        super::get_skill_detail_with_row_impl(pool, skill_id, None, None).await
     }
 
     async fn read_skill_content_impl(pool: &SqlitePool, skill_id: &str) -> Result<String, String> {
@@ -694,6 +878,243 @@ mod tests {
         assert_eq!(skills[0].id, "shared-skill");
         assert_eq!(skills[1].id, "shared-skill");
         assert_ne!(skills[0].dir_path, skills[1].dir_path);
+    }
+
+    #[tokio::test]
+    async fn test_get_skills_by_agent_impl_claude_includes_source_identity_and_conflict_grouping() {
+        let pool = setup_test_db().await;
+
+        db::upsert_agent_skill_observation(
+            &pool,
+            &make_observation(
+                "claude-code::/tmp/.claude/skills/shared-skill",
+                "shared-skill",
+                "Shared Skill",
+                "/tmp/.claude/skills/shared-skill",
+                "user",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        db::upsert_agent_skill_observation(
+            &pool,
+            &make_observation(
+                "claude-code::/tmp/.claude/plugins/marketplaces/market-a/shared-skill",
+                "shared-skill",
+                "Shared Skill",
+                "/tmp/.claude/plugins/marketplaces/market-a/shared-skill",
+                "marketplace",
+                true,
+            ),
+        )
+        .await
+        .unwrap();
+
+        let mut skills = get_skills_by_agent_impl(&pool, "claude-code")
+            .await
+            .unwrap();
+        skills.sort_by(|a, b| a.dir_path.cmp(&b.dir_path));
+
+        assert_eq!(skills.len(), 2);
+        assert_eq!(
+            skills[0].row_id,
+            "claude-code::/tmp/.claude/plugins/marketplaces/market-a/shared-skill"
+        );
+        assert_eq!(
+            skills[1].row_id,
+            "claude-code::/tmp/.claude/skills/shared-skill"
+        );
+        assert_eq!(skills[0].source_kind.as_deref(), Some("marketplace"));
+        assert_eq!(skills[1].source_kind.as_deref(), Some("user"));
+        assert_eq!(
+            skills[0].source_root.as_deref(),
+            Some("/tmp/.claude/plugins/marketplaces/market-a")
+        );
+        assert_eq!(
+            skills[1].source_root.as_deref(),
+            Some("/tmp/.claude/skills")
+        );
+        assert!(skills[0].is_read_only);
+        assert!(!skills[1].is_read_only);
+        assert_eq!(
+            skills[0].conflict_group.as_deref(),
+            Some("claude-code::shared-skill")
+        );
+        assert_eq!(
+            skills[1].conflict_group.as_deref(),
+            Some("claude-code::shared-skill")
+        );
+        assert_eq!(skills[0].conflict_count, 2);
+        assert_eq!(skills[1].conflict_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_get_skill_detail_with_row_impl_claude_marketplace_row_uses_selected_observation()
+    {
+        let pool = setup_test_db().await;
+
+        let skill = make_skill("shared-skill", "Shared Skill", false);
+        db::upsert_skill(&pool, &skill).await.unwrap();
+        db::upsert_skill_installation(
+            &pool,
+            &SkillInstallation {
+                skill_id: "shared-skill".to_string(),
+                agent_id: "claude-code".to_string(),
+                installed_path: "/tmp/.claude/skills/shared-skill".to_string(),
+                link_type: "copy".to_string(),
+                symlink_target: None,
+                created_at: Utc::now().to_rfc3339(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let collection = db::create_collection(&pool, "Alpha", None).await.unwrap();
+        db::add_skill_to_collection(&pool, &collection.id, "shared-skill")
+            .await
+            .unwrap();
+
+        db::upsert_agent_skill_observation(
+            &pool,
+            &make_observation(
+                "claude-code::/tmp/.claude/skills/shared-skill",
+                "shared-skill",
+                "Shared Skill",
+                "/tmp/.claude/skills/shared-skill",
+                "user",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        db::upsert_agent_skill_observation(
+            &pool,
+            &make_observation(
+                "claude-code::/tmp/.claude/plugins/marketplaces/market-a/shared-skill",
+                "shared-skill",
+                "Shared Skill",
+                "/tmp/.claude/plugins/marketplaces/market-a/shared-skill",
+                "marketplace",
+                true,
+            ),
+        )
+        .await
+        .unwrap();
+
+        let detail = get_skill_detail_with_row_impl(
+            &pool,
+            "shared-skill",
+            Some("claude-code"),
+            Some("claude-code::/tmp/.claude/plugins/marketplaces/market-a/shared-skill"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            detail.row_id,
+            "claude-code::/tmp/.claude/plugins/marketplaces/market-a/shared-skill"
+        );
+        assert_eq!(
+            detail.dir_path,
+            "/tmp/.claude/plugins/marketplaces/market-a/shared-skill"
+        );
+        assert_eq!(
+            detail.file_path,
+            "/tmp/.claude/plugins/marketplaces/market-a/shared-skill/SKILL.md"
+        );
+        assert_eq!(detail.source_kind.as_deref(), Some("marketplace"));
+        assert_eq!(
+            detail.source_root.as_deref(),
+            Some("/tmp/.claude/plugins/marketplaces/market-a")
+        );
+        assert!(detail.is_read_only);
+        assert_eq!(detail.conflict_count, 2);
+        assert_eq!(
+            detail.conflict_group.as_deref(),
+            Some("claude-code::shared-skill")
+        );
+        assert!(
+            detail.installations.is_empty(),
+            "marketplace detail should not expose manageable installations"
+        );
+        assert!(
+            detail.collections.is_empty(),
+            "marketplace detail should not expose collection management state"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_skill_detail_with_row_impl_claude_user_row_keeps_manageable_state() {
+        let pool = setup_test_db().await;
+
+        let skill = make_skill("shared-skill", "Shared Skill", false);
+        db::upsert_skill(&pool, &skill).await.unwrap();
+        db::upsert_skill_installation(
+            &pool,
+            &SkillInstallation {
+                skill_id: "shared-skill".to_string(),
+                agent_id: "claude-code".to_string(),
+                installed_path: "/tmp/.claude/skills/shared-skill".to_string(),
+                link_type: "copy".to_string(),
+                symlink_target: None,
+                created_at: Utc::now().to_rfc3339(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let collection = db::create_collection(&pool, "Alpha", None).await.unwrap();
+        db::add_skill_to_collection(&pool, &collection.id, "shared-skill")
+            .await
+            .unwrap();
+
+        db::upsert_agent_skill_observation(
+            &pool,
+            &make_observation(
+                "claude-code::/tmp/.claude/skills/shared-skill",
+                "shared-skill",
+                "Shared Skill",
+                "/tmp/.claude/skills/shared-skill",
+                "user",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        db::upsert_agent_skill_observation(
+            &pool,
+            &make_observation(
+                "claude-code::/tmp/.claude/plugins/marketplaces/market-a/shared-skill",
+                "shared-skill",
+                "Shared Skill",
+                "/tmp/.claude/plugins/marketplaces/market-a/shared-skill",
+                "marketplace",
+                true,
+            ),
+        )
+        .await
+        .unwrap();
+
+        let detail = get_skill_detail_with_row_impl(
+            &pool,
+            "shared-skill",
+            Some("claude-code"),
+            Some("claude-code::/tmp/.claude/skills/shared-skill"),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            detail.row_id,
+            "claude-code::/tmp/.claude/skills/shared-skill"
+        );
+        assert_eq!(detail.dir_path, "/tmp/.claude/skills/shared-skill");
+        assert_eq!(detail.source_kind.as_deref(), Some("user"));
+        assert!(!detail.is_read_only);
+        assert_eq!(detail.conflict_count, 2);
+        assert_eq!(detail.installations.len(), 1);
+        assert_eq!(detail.collections.len(), 1);
     }
 
     #[tokio::test]
