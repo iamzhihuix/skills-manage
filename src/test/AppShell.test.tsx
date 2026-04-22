@@ -3,12 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { usePlatformStore } from "@/stores/platformStore";
+import { useCentralSkillsStore } from "@/stores/centralSkillsStore";
 import { useDiscoverStore } from "@/stores/discoverStore";
 
 let triggerRescanInMock = false;
 
 vi.mock("@/stores/platformStore", () => ({
   usePlatformStore: vi.fn(),
+}));
+
+vi.mock("@/stores/centralSkillsStore", () => ({
+  useCentralSkillsStore: vi.fn(),
 }));
 
 vi.mock("@/stores/discoverStore", () => ({
@@ -47,6 +52,7 @@ vi.mock("@/components/layout/GlobalSearchDialog", () => ({
 }));
 
 const mockUsePlatformStore = vi.mocked(usePlatformStore);
+const mockUseCentralSkillsStore = vi.mocked(useCentralSkillsStore);
 const mockUseDiscoverStore = vi.mocked(useDiscoverStore);
 
 let testNavigate: ReturnType<typeof useNavigate> | null = null;
@@ -81,8 +87,17 @@ describe("AppShell", () => {
       if (typeof selector === "function") return selector(state);
       return state;
     });
+    mockUseCentralSkillsStore.mockImplementation((selector?: unknown) => {
+      const state = {
+        loadCentralSkills: vi.fn(),
+      };
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
     mockUseDiscoverStore.mockImplementation((selector?: unknown) => {
-      const state = {};
+      const state = {
+        refreshCounts: vi.fn(),
+      };
       if (typeof selector === "function") return selector(state);
       return state;
     });
@@ -121,14 +136,30 @@ describe("AppShell", () => {
     expect((main as HTMLElement).scrollTop).toBe(0);
   });
 
-  it("routes the global rescan action to the platform scan store", async () => {
+  it("routes the global rescan action to the platform, central, and discover stores", async () => {
     const mockRescan = vi.fn().mockResolvedValue(undefined);
+    const mockLoadCentralSkills = vi.fn().mockResolvedValue(undefined);
+    const mockRefreshDiscoverCounts = vi.fn().mockResolvedValue(undefined);
     triggerRescanInMock = true;
 
     mockUsePlatformStore.mockImplementation((selector?: unknown) => {
       const state = {
         initialize: vi.fn(),
         rescan: mockRescan,
+      };
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
+    mockUseCentralSkillsStore.mockImplementation((selector?: unknown) => {
+      const state = {
+        loadCentralSkills: mockLoadCentralSkills,
+      };
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
+    mockUseDiscoverStore.mockImplementation((selector?: unknown) => {
+      const state = {
+        refreshCounts: mockRefreshDiscoverCounts,
       };
       if (typeof selector === "function") return selector(state);
       return state;
@@ -153,5 +184,70 @@ describe("AppShell", () => {
     });
 
     expect(mockRescan).toHaveBeenCalledTimes(1);
+    expect(mockLoadCentralSkills).toHaveBeenCalledTimes(1);
+    expect(mockRefreshDiscoverCounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the platform rescan before refreshing central and discover surfaces", async () => {
+    let resolveRescan!: () => void;
+    const rescanPromise = new Promise<void>((resolve) => {
+      resolveRescan = () => resolve();
+    });
+    const mockRescan = vi.fn().mockReturnValue(rescanPromise);
+    const mockLoadCentralSkills = vi.fn().mockResolvedValue(undefined);
+    const mockRefreshDiscoverCounts = vi.fn().mockResolvedValue(undefined);
+    triggerRescanInMock = true;
+
+    mockUsePlatformStore.mockImplementation((selector?: unknown) => {
+      const state = {
+        initialize: vi.fn(),
+        rescan: mockRescan,
+      };
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
+    mockUseCentralSkillsStore.mockImplementation((selector?: unknown) => {
+      const state = {
+        loadCentralSkills: mockLoadCentralSkills,
+      };
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
+    mockUseDiscoverStore.mockImplementation((selector?: unknown) => {
+      const state = {
+        refreshCounts: mockRefreshDiscoverCounts,
+      };
+      if (typeof selector === "function") return selector(state);
+      return state;
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/a"]}>
+        <Routes>
+          <Route path="/" element={<AppShell />}>
+            <Route path="a" element={<DummyPage label="page-a" />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await act(async () => {
+      screen.getByRole("button", { name: /open-search/i }).click();
+    });
+
+    await act(async () => {
+      screen.getByRole("button", { name: /trigger-rescan/i }).click();
+    });
+
+    expect(mockRescan).toHaveBeenCalledTimes(1);
+    expect(mockLoadCentralSkills).not.toHaveBeenCalled();
+    expect(mockRefreshDiscoverCounts).not.toHaveBeenCalled();
+
+    resolveRescan();
+
+    await waitFor(() => {
+      expect(mockLoadCentralSkills).toHaveBeenCalledTimes(1);
+      expect(mockRefreshDiscoverCounts).toHaveBeenCalledTimes(1);
+    });
   });
 });

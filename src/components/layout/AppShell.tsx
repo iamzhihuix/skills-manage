@@ -4,6 +4,8 @@ import { Sidebar } from "./Sidebar";
 import { TopBar } from "./TopBar";
 import { GlobalSearchDialog } from "./GlobalSearchDialog";
 import { usePlatformStore } from "@/stores/platformStore";
+import { useCentralSkillsStore } from "@/stores/centralSkillsStore";
+import { useDiscoverStore } from "@/stores/discoverStore";
 
 /**
  * Top-level app shell: TopBar + icon sidebar + scrollable main content area.
@@ -16,6 +18,8 @@ export function AppShell() {
 
   const initialize = usePlatformStore((s) => s.initialize);
   const rescan = usePlatformStore((s) => s.rescan);
+  const loadCentralSkills = useCentralSkillsStore((s) => s.loadCentralSkills);
+  const refreshDiscoverCounts = useDiscoverStore((s) => s.refreshCounts);
 
   useEffect(() => {
     initialize();
@@ -27,10 +31,18 @@ export function AppShell() {
     mainRef.current.scrollTop = 0;
   }, [pathname]);
 
+  async function handleGlobalRescan() {
+    await rescan();
+    await Promise.allSettled([
+      loadCentralSkills(),
+      refreshDiscoverCounts(),
+    ]);
+  }
+
   function handleAction(action: string) {
     switch (action) {
       case "rescan":
-        void rescan();
+        void handleGlobalRescan();
         break;
     }
   }
