@@ -97,6 +97,7 @@ describe("AppShell", () => {
     mockUseDiscoverStore.mockImplementation((selector?: unknown) => {
       const state = {
         refreshCounts: vi.fn(),
+        rescanFromDisk: vi.fn(),
       };
       if (typeof selector === "function") return selector(state);
       return state;
@@ -136,10 +137,11 @@ describe("AppShell", () => {
     expect((main as HTMLElement).scrollTop).toBe(0);
   });
 
-  it("routes the global rescan action to the platform, central, and discover stores", async () => {
+  it("routes the global rescan action to the platform, central, and discover disk scan stores", async () => {
     const mockRescan = vi.fn().mockResolvedValue(undefined);
     const mockLoadCentralSkills = vi.fn().mockResolvedValue(undefined);
     const mockRefreshDiscoverCounts = vi.fn().mockResolvedValue(undefined);
+    const mockRescanDiscoverFromDisk = vi.fn().mockResolvedValue(undefined);
     triggerRescanInMock = true;
 
     mockUsePlatformStore.mockImplementation((selector?: unknown) => {
@@ -160,6 +162,7 @@ describe("AppShell", () => {
     mockUseDiscoverStore.mockImplementation((selector?: unknown) => {
       const state = {
         refreshCounts: mockRefreshDiscoverCounts,
+        rescanFromDisk: mockRescanDiscoverFromDisk,
       };
       if (typeof selector === "function") return selector(state);
       return state;
@@ -185,10 +188,11 @@ describe("AppShell", () => {
 
     expect(mockRescan).toHaveBeenCalledTimes(1);
     expect(mockLoadCentralSkills).toHaveBeenCalledTimes(1);
-    expect(mockRefreshDiscoverCounts).toHaveBeenCalledTimes(1);
+    expect(mockRescanDiscoverFromDisk).toHaveBeenCalledTimes(1);
+    expect(mockRefreshDiscoverCounts).not.toHaveBeenCalled();
   });
 
-  it("waits for the platform rescan before refreshing central and discover surfaces", async () => {
+  it("waits for the platform rescan before refreshing central and rerunning discover from disk", async () => {
     let resolveRescan!: () => void;
     const rescanPromise = new Promise<void>((resolve) => {
       resolveRescan = () => resolve();
@@ -196,6 +200,7 @@ describe("AppShell", () => {
     const mockRescan = vi.fn().mockReturnValue(rescanPromise);
     const mockLoadCentralSkills = vi.fn().mockResolvedValue(undefined);
     const mockRefreshDiscoverCounts = vi.fn().mockResolvedValue(undefined);
+    const mockRescanDiscoverFromDisk = vi.fn().mockResolvedValue(undefined);
     triggerRescanInMock = true;
 
     mockUsePlatformStore.mockImplementation((selector?: unknown) => {
@@ -216,6 +221,7 @@ describe("AppShell", () => {
     mockUseDiscoverStore.mockImplementation((selector?: unknown) => {
       const state = {
         refreshCounts: mockRefreshDiscoverCounts,
+        rescanFromDisk: mockRescanDiscoverFromDisk,
       };
       if (typeof selector === "function") return selector(state);
       return state;
@@ -241,13 +247,16 @@ describe("AppShell", () => {
 
     expect(mockRescan).toHaveBeenCalledTimes(1);
     expect(mockLoadCentralSkills).not.toHaveBeenCalled();
+    expect(mockRescanDiscoverFromDisk).not.toHaveBeenCalled();
     expect(mockRefreshDiscoverCounts).not.toHaveBeenCalled();
 
     resolveRescan();
 
     await waitFor(() => {
       expect(mockLoadCentralSkills).toHaveBeenCalledTimes(1);
-      expect(mockRefreshDiscoverCounts).toHaveBeenCalledTimes(1);
+      expect(mockRescanDiscoverFromDisk).toHaveBeenCalledTimes(1);
     });
+
+    expect(mockRefreshDiscoverCounts).not.toHaveBeenCalled();
   });
 });

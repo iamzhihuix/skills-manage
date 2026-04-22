@@ -19,7 +19,7 @@ export function AppShell() {
   const initialize = usePlatformStore((s) => s.initialize);
   const rescan = usePlatformStore((s) => s.rescan);
   const loadCentralSkills = useCentralSkillsStore((s) => s.loadCentralSkills);
-  const refreshDiscoverCounts = useDiscoverStore((s) => s.refreshCounts);
+  const rescanDiscoverFromDisk = useDiscoverStore((s) => s.rescanFromDisk);
 
   useEffect(() => {
     initialize();
@@ -35,7 +35,7 @@ export function AppShell() {
     await rescan();
     await Promise.allSettled([
       loadCentralSkills(),
-      refreshDiscoverCounts(),
+      rescanDiscoverFromDisk(),
     ]);
   }
 

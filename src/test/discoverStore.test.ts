@@ -229,6 +229,46 @@ describe("discoverStore", () => {
     expect(state.error).toContain("scan failed");
   });
 
+  it("rescanFromDisk reloads persisted scan roots and reruns the real project scan", async () => {
+    const result: DiscoverResult = {
+      total_projects: 1,
+      total_skills: 2,
+      projects: mockDiscoveredProjects,
+    };
+
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(mockScanRoots)
+      .mockResolvedValueOnce(result);
+
+    await useDiscoverStore.getState().rescanFromDisk();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_scan_roots");
+    expect(invoke).toHaveBeenNthCalledWith(2, "start_project_scan", {
+      roots: mockScanRoots,
+    });
+    expect(invoke).not.toHaveBeenCalledWith("get_discovered_skills");
+
+    const state = useDiscoverStore.getState();
+    expect(state.scanRoots).toEqual(mockScanRoots);
+    expect(state.discoveredProjects).toEqual(mockDiscoveredProjects);
+    expect(state.totalSkillsFound).toBe(2);
+    expect(state.lastScanAt).not.toBeNull();
+  });
+
+  it("rescanFromDisk surfaces root-loading failures without starting a stale cached refresh", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("root load failed"));
+
+    await useDiscoverStore.getState().rescanFromDisk();
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith("get_scan_roots");
+
+    const state = useDiscoverStore.getState();
+    expect(state.isLoadingRoots).toBe(false);
+    expect(state.isScanning).toBe(false);
+    expect(state.error).toContain("root load failed");
+  });
+
   // ── stopScan ──────────────────────────────────────────────────────────────
 
   it("calls stop_project_scan on stopScan", async () => {

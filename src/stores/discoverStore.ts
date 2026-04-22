@@ -32,6 +32,11 @@ const BROWSER_FIXTURE_DISCOVERED_PROJECTS: DiscoveredProject[] = [
   },
 ];
 
+const BROWSER_FIXTURE_TOTAL_SKILLS = BROWSER_FIXTURE_DISCOVERED_PROJECTS.reduce(
+  (sum, project) => sum + project.skills.length,
+  0
+);
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 interface DiscoverState {
@@ -69,6 +74,7 @@ interface DiscoverState {
   stopScan: () => Promise<void>;
   loadDiscoveredSkills: () => Promise<void>;
   refreshCounts: () => Promise<void>;
+  rescanFromDisk: () => Promise<void>;
   importToCentral: (skillId: string) => Promise<DiscoverImportResult>;
   importToPlatform: (skillId: string, agentId: string) => Promise<DiscoverImportResult>;
   clearResults: () => Promise<void>;
@@ -270,7 +276,7 @@ export const useDiscoverStore = create<DiscoverState>((set, get) => ({
     if (!isTauriRuntime()) {
       set({
         discoveredProjects: BROWSER_FIXTURE_DISCOVERED_PROJECTS,
-        totalSkillsFound: 1,
+        totalSkillsFound: BROWSER_FIXTURE_TOTAL_SKILLS,
       });
       return;
     }
@@ -284,6 +290,63 @@ export const useDiscoverStore = create<DiscoverState>((set, get) => ({
     } catch (err) {
       set({ error: String(err) });
       throw err;
+    }
+  },
+
+  rescanFromDisk: async () => {
+    if (!isTauriRuntime()) {
+      set({
+        scanRoots: [],
+        isLoadingRoots: false,
+        isScanning: false,
+        scanProgress: 100,
+        currentPath: "",
+        skillsFoundSoFar: BROWSER_FIXTURE_TOTAL_SKILLS,
+        projectsFoundSoFar: BROWSER_FIXTURE_DISCOVERED_PROJECTS.length,
+        discoveredProjects: BROWSER_FIXTURE_DISCOVERED_PROJECTS,
+        totalSkillsFound: BROWSER_FIXTURE_TOTAL_SKILLS,
+        lastScanAt: new Date().toISOString(),
+        selectedSkillIds: new Set<string>(),
+        error: null,
+      });
+      return;
+    }
+
+    set({ isLoadingRoots: true, error: null });
+    try {
+      const roots = await invoke<ScanRoot[]>("get_scan_roots");
+      set({ scanRoots: roots, isLoadingRoots: false });
+
+      set({
+        isScanning: true,
+        scanProgress: 0,
+        currentPath: "",
+        skillsFoundSoFar: 0,
+        projectsFoundSoFar: 0,
+        discoveredProjects: [],
+        totalSkillsFound: 0,
+        error: null,
+        selectedSkillIds: new Set<string>(),
+      });
+
+      await setupEventListeners(set);
+
+      const result = await invoke<DiscoverResult>("start_project_scan", {
+        roots,
+      });
+      set({
+        isScanning: false,
+        scanProgress: 100,
+        discoveredProjects: result.projects,
+        totalSkillsFound: result.total_skills,
+        lastScanAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      set({
+        error: String(err),
+        isLoadingRoots: false,
+        isScanning: false,
+      });
     }
   },
 

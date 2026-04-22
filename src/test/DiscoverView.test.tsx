@@ -223,6 +223,7 @@ const mockImportToPlatform = vi.fn();
 const mockToggleSkillSelection = vi.fn();
 const mockClearSelection = vi.fn();
 const mockRescan = vi.fn();
+const mockRescanFromDisk = vi.fn();
 const mockStopScan = vi.fn();
 const mockUseDiscoverStore = vi.mocked(useDiscoverStore);
 const mockUsePlatformStore = vi.mocked(usePlatformStore);
@@ -257,6 +258,7 @@ function buildDiscoverStoreState(overrides = {}) {
     clearResults: vi.fn(),
     selectAllVisible: vi.fn(),
     refreshCounts: vi.fn(),
+    rescanFromDisk: mockRescanFromDisk,
     clearError: vi.fn(),
     error: null,
     lastScanAt: null,
