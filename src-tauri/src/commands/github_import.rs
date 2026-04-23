@@ -1988,7 +1988,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn direct_github_request_uses_bearer_auth_only_for_github_endpoint() {
+    async fn authenticated_api_fallback_does_not_forward_bearer_auth_to_mirror() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::sync::{
@@ -2014,8 +2014,15 @@ mod tests {
                     .expect("lock")
                     .push(request_text.clone());
                 accepted_clone.fetch_add(1, Ordering::SeqCst);
-                let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
-                stream.write_all(response.as_bytes()).expect("write");
+
+                if request_text.contains("GET /direct") {
+                    let response =
+                        "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 11\r\n\r\nbad gateway";
+                    stream.write_all(response.as_bytes()).expect("write direct");
+                } else {
+                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                    stream.write_all(response.as_bytes()).expect("write mirror");
+                }
             }
         });
 
@@ -2023,7 +2030,7 @@ mod tests {
         let direct_url = format!("http://{}/direct", address);
         let mirror_url = format!("http://{}/mirror", address);
 
-        let direct_response = send_github_request_with_fallback(
+        let response = send_github_request_with_fallback(
             &client,
             GitHubFetchSurface::Api,
             |endpoint| {
@@ -2037,19 +2044,8 @@ mod tests {
             Some("direct-token"),
         )
         .await
-        .expect("direct response");
-        assert!(direct_response.status().is_success());
-
-        let mirror_response = send_github_request_with_fallback(
-            &client,
-            GitHubFetchSurface::Api,
-            |_| mirror_url.clone(),
-            "mirror request failed",
-            Some("direct-token"),
-        )
-        .await
-        .expect("mirror response");
-        assert!(mirror_response.status().is_success());
+        .expect("fallback response");
+        assert!(response.status().is_success());
 
         server.join().expect("server join");
         let captured = requests.lock().expect("captured");
@@ -2070,6 +2066,87 @@ mod tests {
             !mirror_request.contains("authorization: Bearer direct-token")
                 && !mirror_request.contains("Authorization: Bearer direct-token"),
             "mirror request should not include bearer auth"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticated_raw_fallback_does_not_forward_bearer_auth_to_mirror() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        };
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let requests = Arc::new(Mutex::new(Vec::<String>::new()));
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let requests_clone = Arc::clone(&requests);
+        let accepted_clone = Arc::clone(&accepted);
+
+        let server = std::thread::spawn(move || {
+            while accepted_clone.load(Ordering::SeqCst) < 2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut buffer = [0_u8; 2048];
+                let bytes_read = stream.read(&mut buffer).expect("read");
+                let request_text = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
+                requests_clone
+                    .lock()
+                    .expect("lock")
+                    .push(request_text.clone());
+                accepted_clone.fetch_add(1, Ordering::SeqCst);
+
+                if request_text.contains("GET /raw-direct") {
+                    let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 19\r\n\r\nservice unavailable";
+                    stream.write_all(response.as_bytes()).expect("write direct");
+                } else {
+                    let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                    stream.write_all(response.as_bytes()).expect("write mirror");
+                }
+            }
+        });
+
+        let client = github_client().expect("client");
+        let direct_url = format!("http://{}/raw-direct", address);
+        let mirror_url = format!("http://{}/raw-mirror", address);
+
+        let response = send_github_request_with_fallback(
+            &client,
+            GitHubFetchSurface::Raw,
+            |endpoint| {
+                if endpoint.label == "github" {
+                    direct_url.clone()
+                } else {
+                    mirror_url.clone()
+                }
+            },
+            "raw request failed",
+            Some("direct-token"),
+        )
+        .await
+        .expect("fallback response");
+        assert!(response.status().is_success());
+
+        server.join().expect("server join");
+        let captured = requests.lock().expect("captured");
+        let direct_request = captured
+            .iter()
+            .find(|request| request.contains("GET /raw-direct"))
+            .expect("captured direct request");
+        let mirror_request = captured
+            .iter()
+            .find(|request| request.contains("GET /raw-mirror"))
+            .expect("captured mirror request");
+        assert!(
+            direct_request.contains("authorization: Bearer direct-token")
+                || direct_request.contains("Authorization: Bearer direct-token"),
+            "direct raw request should include bearer auth"
+        );
+        assert!(
+            !mirror_request.contains("authorization: Bearer direct-token")
+                && !mirror_request.contains("Authorization: Bearer direct-token"),
+            "mirror raw request should not include bearer auth"
         );
     }
 
