@@ -14,6 +14,12 @@ pub struct InstallResult {
     pub symlink_path: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct LinkCreationResult {
+    pub link_type: String,
+    pub symlink_target: Option<String>,
+}
+
 /// Result of a batch install across multiple agents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchInstallResult {
@@ -70,20 +76,61 @@ pub fn make_relative_path(from_dir: &Path, to_path: &Path) -> PathBuf {
 
 // ─── Platform-specific symlink creation ──────────────────────────────────────
 
+#[cfg(windows)]
+const WINDOWS_SYMLINK_PRIVILEGE_ERROR: i32 = 1314;
+
 #[cfg(unix)]
-pub fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
-    std::os::unix::fs::symlink(target, link).map_err(|e| format!("Failed to create symlink: {}", e))
+pub(crate) fn try_create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
 }
 
 #[cfg(windows)]
-pub fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
+pub(crate) fn try_create_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::windows::fs::symlink_dir(target, link)
-        .map_err(|e| format!("Failed to create symlink: {}", e))
 }
 
 #[cfg(not(any(unix, windows)))]
-pub fn create_symlink(_target: &Path, _link: &Path) -> Result<(), String> {
-    Err("Symlink creation is only supported on Unix systems".to_string())
+pub(crate) fn try_create_symlink(_target: &Path, _link: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "Symlink creation is only supported on Unix systems",
+    ))
+}
+
+pub fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
+    try_create_symlink(target, link).map_err(|e| format!("Failed to create symlink: {}", e))
+}
+
+#[cfg(windows)]
+pub(crate) fn should_fallback_to_copy_error(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(WINDOWS_SYMLINK_PRIVILEGE_ERROR)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn should_fallback_to_copy_error(_error: &std::io::Error) -> bool {
+    false
+}
+
+pub(crate) fn create_symlink_or_copy(
+    symlink_target_path: &Path,
+    link_path: &Path,
+    copy_source_path: &Path,
+    recorded_symlink_target: String,
+) -> Result<LinkCreationResult, String> {
+    match try_create_symlink(symlink_target_path, link_path) {
+        Ok(()) => Ok(LinkCreationResult {
+            link_type: "symlink".to_string(),
+            symlink_target: Some(recorded_symlink_target),
+        }),
+        Err(error) if should_fallback_to_copy_error(&error) => {
+            copy_dir_all(copy_source_path, link_path)?;
+            Ok(LinkCreationResult {
+                link_type: "copy".to_string(),
+                symlink_target: None,
+            })
+        }
+        Err(error) => Err(format!("Failed to create symlink: {}", error)),
+    }
 }
 
 pub fn symlink_target_path(from_dir: &Path, to_path: &Path) -> PathBuf {
@@ -267,20 +314,15 @@ pub async fn install_skill_to_agent_impl(
     // 8. Create the symlink.
     create_symlink(&relative_target, &symlink_path)?;
 
-    // 9. Persist the installation record.
-    let installation = SkillInstallation {
-        skill_id: skill_id.to_string(),
-        agent_id: agent_id.to_string(),
-        installed_path: symlink_path.to_string_lossy().into_owned(),
-        link_type: "symlink".to_string(),
-        symlink_target: Some(canonical_dir.to_string_lossy().into_owned()),
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
-    db::upsert_skill_installation(pool, &installation).await?;
-
-    Ok(InstallResult {
-        symlink_path: symlink_path.to_string_lossy().into_owned(),
-    })
+    persist_installation(
+        pool,
+        skill_id,
+        agent_id,
+        &symlink_path,
+        "symlink".to_string(),
+        Some(canonical_dir.to_string_lossy().into_owned()),
+    )
+    .await
 }
 
 pub async fn install_skill_to_agent_auto_impl(
@@ -288,23 +330,64 @@ pub async fn install_skill_to_agent_auto_impl(
     skill_id: &str,
     agent_id: &str,
 ) -> Result<InstallResult, String> {
-    match install_skill_to_agent_impl(pool, skill_id, agent_id).await {
-        Ok(result) => Ok(result),
-        Err(error) if should_fallback_to_copy(&error) => {
-            install_skill_to_agent_copy_impl(pool, skill_id, agent_id).await
-        }
-        Err(error) => Err(error),
+    // Guard: cannot install to the central agent itself.
+    if agent_id == "central" {
+        return Err("Cannot install a skill to the central agent itself".to_string());
     }
-}
 
-#[cfg(windows)]
-pub(crate) fn should_fallback_to_copy(error: &str) -> bool {
-    error.contains("Failed to create symlink")
-}
+    let agent = db::get_agent_by_id(pool, agent_id)
+        .await?
+        .ok_or_else(|| format!("Agent '{}' not found", agent_id))?;
+    let central = db::get_agent_by_id(pool, "central")
+        .await?
+        .ok_or_else(|| "Central agent not found in database".to_string())?;
 
-#[cfg(not(windows))]
-pub(crate) fn should_fallback_to_copy(_error: &str) -> bool {
-    false
+    let canonical_dir = PathBuf::from(&central.global_skills_dir).join(skill_id);
+    ensure_centralized(pool, skill_id, &canonical_dir).await?;
+
+    let agent_dir = PathBuf::from(&agent.global_skills_dir);
+    let target_path = agent_dir.join(skill_id);
+
+    std::fs::create_dir_all(&agent_dir)
+        .map_err(|e| format!("Failed to create agent skills directory: {}", e))?;
+
+    match std::fs::symlink_metadata(&target_path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            std::fs::remove_file(&target_path)
+                .map_err(|e| format!("Failed to remove existing symlink: {}", e))?;
+        }
+        Ok(meta) if meta.is_dir() => {
+            return Err(format!(
+                "A real directory already exists at '{}'. Refusing to overwrite.",
+                target_path.display()
+            ));
+        }
+        Ok(_) => {
+            return Err(format!(
+                "A file already exists at '{}'. Refusing to overwrite.",
+                target_path.display()
+            ));
+        }
+        Err(_) => {}
+    }
+
+    let relative_target = symlink_target_path(&agent_dir, &canonical_dir);
+    let link = create_symlink_or_copy(
+        &relative_target,
+        &target_path,
+        &canonical_dir,
+        canonical_dir.to_string_lossy().into_owned(),
+    )?;
+
+    persist_installation(
+        pool,
+        skill_id,
+        agent_id,
+        &target_path,
+        link.link_type,
+        link.symlink_target,
+    )
+    .await
 }
 
 /// Core copy-install logic — copies the skill directory instead of symlinking.
@@ -370,19 +453,37 @@ pub async fn install_skill_to_agent_copy_impl(
     // 7. Recursively copy the canonical skill directory.
     copy_dir_all(&canonical_dir, &target_path)?;
 
-    // 8. Persist the installation record.
+    persist_installation(
+        pool,
+        skill_id,
+        agent_id,
+        &target_path,
+        "copy".to_string(),
+        None,
+    )
+    .await
+}
+
+async fn persist_installation(
+    pool: &DbPool,
+    skill_id: &str,
+    agent_id: &str,
+    installed_path: &Path,
+    link_type: String,
+    symlink_target: Option<String>,
+) -> Result<InstallResult, String> {
     let installation = SkillInstallation {
         skill_id: skill_id.to_string(),
         agent_id: agent_id.to_string(),
-        installed_path: target_path.to_string_lossy().into_owned(),
-        link_type: "copy".to_string(),
-        symlink_target: None,
+        installed_path: installed_path.to_string_lossy().into_owned(),
+        link_type,
+        symlink_target,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
     db::upsert_skill_installation(pool, &installation).await?;
 
     Ok(InstallResult {
-        symlink_path: target_path.to_string_lossy().into_owned(),
+        symlink_path: installed_path.to_string_lossy().into_owned(),
     })
 }
 
@@ -563,7 +664,7 @@ mod tests {
 
     #[cfg(windows)]
     fn is_windows_symlink_privilege_error(error: &str) -> bool {
-        error.contains("os error 1314")
+        error.contains(&WINDOWS_SYMLINK_PRIVILEGE_ERROR.to_string())
     }
 
     #[cfg(not(windows))]

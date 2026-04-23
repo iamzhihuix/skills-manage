@@ -535,7 +535,7 @@ mod tests {
 
     #[cfg(windows)]
     fn should_skip_symlink_test(error: &std::io::Error) -> bool {
-        error.raw_os_error() == Some(1314)
+        super::super::linker::should_fallback_to_copy_error(error)
     }
 
     #[cfg(not(windows))]

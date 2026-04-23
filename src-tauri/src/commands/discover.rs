@@ -780,15 +780,12 @@ pub async fn import_discovered_skill_to_platform(
     // copy on Windows when symlink privileges are unavailable.
     let src_path = Path::new(&skill.dir_path);
     let relative_target = super::linker::symlink_target_path(&agent_dir, src_path);
-    let (link_type, symlink_target) =
-        match super::linker::create_symlink(&relative_target, &target_path) {
-            Ok(()) => ("symlink".to_string(), Some(skill.dir_path.clone())),
-            Err(error) if super::linker::should_fallback_to_copy(&error) => {
-                super::linker::copy_dir_all(src_path, &target_path)?;
-                ("copy".to_string(), None)
-            }
-            Err(error) => return Err(error),
-        };
+    let link = super::linker::create_symlink_or_copy(
+        &relative_target,
+        &target_path,
+        src_path,
+        skill.dir_path.clone(),
+    )?;
 
     // Record the installation.
     let now = Utc::now().to_rfc3339();
@@ -805,7 +802,7 @@ pub async fn import_discovered_skill_to_platform(
             file_path: skill_md_path.to_string_lossy().into_owned(),
             canonical_path: None,
             is_central: false,
-            source: Some(link_type.clone()),
+            source: Some(link.link_type.clone()),
             content: None,
             scanned_at: now.clone(),
         };
@@ -816,8 +813,8 @@ pub async fn import_discovered_skill_to_platform(
         skill_id: skill_dir_name.clone(),
         agent_id: agent_id.clone(),
         installed_path: target_path.to_string_lossy().into_owned(),
-        link_type,
-        symlink_target,
+        link_type: link.link_type,
+        symlink_target: link.symlink_target,
         created_at: now,
     };
     db::upsert_skill_installation(pool, &installation).await?;
@@ -1275,15 +1272,12 @@ mod tests {
 
         let src_path = Path::new(&skill.dir_path);
         let relative_target = super::super::linker::symlink_target_path(agent_dir, src_path);
-        let (link_type, symlink_target) =
-            match super::super::linker::create_symlink(&relative_target, &target_path) {
-                Ok(()) => ("symlink".to_string(), Some(skill.dir_path.clone())),
-                Err(error) if super::super::linker::should_fallback_to_copy(&error) => {
-                    super::super::linker::copy_dir_all(src_path, &target_path)?;
-                    ("copy".to_string(), None)
-                }
-                Err(error) => return Err(error),
-            };
+        let link = super::super::linker::create_symlink_or_copy(
+            &relative_target,
+            &target_path,
+            src_path,
+            skill.dir_path.clone(),
+        )?;
 
         // Record the installation.
         let now = Utc::now().to_rfc3339();
@@ -1299,7 +1293,7 @@ mod tests {
                 file_path: skill_md_path.to_string_lossy().into_owned(),
                 canonical_path: None,
                 is_central: false,
-                source: Some(link_type.clone()),
+                source: Some(link.link_type.clone()),
                 content: None,
                 scanned_at: now.clone(),
             };
@@ -1310,8 +1304,8 @@ mod tests {
             skill_id: skill_dir_name.clone(),
             agent_id: agent_id.to_string(),
             installed_path: target_path.to_string_lossy().into_owned(),
-            link_type,
-            symlink_target,
+            link_type: link.link_type,
+            symlink_target: link.symlink_target,
             created_at: now,
         };
         db::upsert_skill_installation(pool, &installation).await?;
