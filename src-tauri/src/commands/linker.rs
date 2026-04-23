@@ -298,12 +298,12 @@ pub async fn install_skill_to_agent_auto_impl(
 }
 
 #[cfg(windows)]
-fn should_fallback_to_copy(error: &str) -> bool {
+pub(crate) fn should_fallback_to_copy(error: &str) -> bool {
     error.contains("Failed to create symlink")
 }
 
 #[cfg(not(windows))]
-fn should_fallback_to_copy(_error: &str) -> bool {
+pub(crate) fn should_fallback_to_copy(_error: &str) -> bool {
     false
 }
 
@@ -561,6 +561,27 @@ mod tests {
 
     // ── make_relative_path ────────────────────────────────────────────────────
 
+    #[cfg(windows)]
+    fn is_windows_symlink_privilege_error(error: &str) -> bool {
+        error.contains("os error 1314")
+    }
+
+    #[cfg(not(windows))]
+    fn is_windows_symlink_privilege_error(_error: &str) -> bool {
+        false
+    }
+
+    fn install_symlink_or_skip(result: Result<InstallResult, String>) -> Option<InstallResult> {
+        match result {
+            Ok(result) => Some(result),
+            Err(error) if is_windows_symlink_privilege_error(&error) => {
+                eprintln!("skipping symlink assertion: {error}");
+                None
+            }
+            Err(error) => panic!("install should succeed: {error}"),
+        }
+    }
+
     #[test]
     fn test_make_relative_path_sibling_dirs() {
         let from = Path::new("/home/user/claude/skills");
@@ -598,8 +619,13 @@ mod tests {
 
         create_central_skill(&central_dir, "my-skill");
 
-        let result = install_skill_to_agent_impl(&pool, "my-skill", "claude-code").await;
-        assert!(result.is_ok(), "install should succeed: {:?}", result);
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "my-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         let symlink_path = agent_dir.join("my-skill");
         let meta = fs::symlink_metadata(&symlink_path).unwrap();
@@ -616,9 +642,13 @@ mod tests {
         let pool = setup_db(&central_dir, &agent_dir).await;
         create_central_skill(&central_dir, "rel-skill");
 
-        install_skill_to_agent_impl(&pool, "rel-skill", "claude-code")
-            .await
-            .unwrap();
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "rel-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         let symlink_path = agent_dir.join("rel-skill");
         let link_target = fs::read_link(&symlink_path).unwrap();
@@ -639,9 +669,13 @@ mod tests {
         let pool = setup_db(&central_dir, &agent_dir).await;
         create_central_skill(&central_dir, "resolve-skill");
 
-        install_skill_to_agent_impl(&pool, "resolve-skill", "claude-code")
-            .await
-            .unwrap();
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "resolve-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         let symlink_path = agent_dir.join("resolve-skill");
         // Following the symlink should give access to SKILL.md in the central dir.
@@ -663,7 +697,7 @@ mod tests {
         let pool = setup_db(&central_dir, &agent_dir).await;
         create_central_skill(&central_dir, "dir-skill");
 
-        let result = install_skill_to_agent_impl(&pool, "dir-skill", "claude-code").await;
+        let result = install_skill_to_agent_auto_impl(&pool, "dir-skill", "claude-code").await;
         assert!(result.is_ok(), "install should create missing agent dir");
         assert!(agent_dir.exists(), "agent dir should have been created");
     }
@@ -678,9 +712,13 @@ mod tests {
         let pool = setup_db(&central_dir, &agent_dir).await;
         create_central_skill(&central_dir, "db-skill");
 
-        install_skill_to_agent_impl(&pool, "db-skill", "claude-code")
-            .await
-            .unwrap();
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "db-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         let installations = db::get_skill_installations(&pool, "db-skill")
             .await
@@ -749,9 +787,13 @@ mod tests {
         create_central_skill(&central_dir, "re-link-skill");
 
         // Install once.
-        install_skill_to_agent_impl(&pool, "re-link-skill", "claude-code")
-            .await
-            .unwrap();
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "re-link-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         // Install again — should replace the existing symlink without error.
         let result = install_skill_to_agent_impl(&pool, "re-link-skill", "claude-code").await;
@@ -791,9 +833,13 @@ mod tests {
         let pool = setup_db(&central_dir, &agent_dir).await;
         create_central_skill(&central_dir, "uninstall-skill");
 
-        install_skill_to_agent_impl(&pool, "uninstall-skill", "claude-code")
-            .await
-            .unwrap();
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "uninstall-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         let symlink_path = agent_dir.join("uninstall-skill");
         assert!(symlink_path.exists() || fs::symlink_metadata(&symlink_path).is_ok());
@@ -818,9 +864,13 @@ mod tests {
         let pool = setup_db(&central_dir, &agent_dir).await;
         create_central_skill(&central_dir, "db-uninstall-skill");
 
-        install_skill_to_agent_impl(&pool, "db-uninstall-skill", "claude-code")
-            .await
-            .unwrap();
+        if install_symlink_or_skip(
+            install_skill_to_agent_impl(&pool, "db-uninstall-skill", "claude-code").await,
+        )
+        .is_none()
+        {
+            return;
+        }
 
         uninstall_skill_from_agent_impl(&pool, "db-uninstall-skill", "claude-code")
             .await
@@ -961,7 +1011,7 @@ mod tests {
         let mut failed = Vec::new();
 
         for agent_id in agent_ids {
-            match install_skill_to_agent_impl(pool, skill_id, agent_id).await {
+            match install_skill_to_agent_auto_impl(pool, skill_id, agent_id).await {
                 Ok(_) => succeeded.push(agent_id.clone()),
                 Err(e) => failed.push(FailedInstall {
                     agent_id: agent_id.clone(),

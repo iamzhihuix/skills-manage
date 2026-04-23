@@ -515,8 +515,44 @@ pub async fn scan_all_skills(state: State<'_, AppState>) -> Result<ScanResult, S
 mod tests {
     use super::*;
     use std::fs;
-    use std::os::unix::fs::symlink;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    fn symlink_dir_for_test(
+        original: impl AsRef<Path>,
+        link: impl AsRef<Path>,
+    ) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(original, link)
+    }
+
+    #[cfg(windows)]
+    fn symlink_dir_for_test(
+        original: impl AsRef<Path>,
+        link: impl AsRef<Path>,
+    ) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(original, link)
+    }
+
+    #[cfg(windows)]
+    fn should_skip_symlink_test(error: &std::io::Error) -> bool {
+        error.raw_os_error() == Some(1314)
+    }
+
+    #[cfg(not(windows))]
+    fn should_skip_symlink_test(_error: &std::io::Error) -> bool {
+        false
+    }
+
+    fn create_symlink_or_skip(original: impl AsRef<Path>, link: impl AsRef<Path>) -> bool {
+        match symlink_dir_for_test(original, link) {
+            Ok(()) => true,
+            Err(error) if should_skip_symlink_test(&error) => {
+                eprintln!("skipping symlink assertion: {error}");
+                false
+            }
+            Err(error) => panic!("failed to create symlink: {error}"),
+        }
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -702,7 +738,9 @@ mod tests {
 
         // Create a symlink pointing to it
         let link_path = tmp.path().join("linked-skill");
-        symlink(&target_dir, &link_path).expect("failed to create symlink");
+        if !create_symlink_or_skip(&target_dir, &link_path) {
+            return;
+        }
 
         let (kind, sym_target) = detect_link_type(&link_path, false);
         assert_eq!(kind, "symlink");
@@ -718,7 +756,9 @@ mod tests {
         let target_dir = tmp.path().join("target");
         fs::create_dir_all(&target_dir).unwrap();
         let link_path = tmp.path().join("link");
-        symlink(&target_dir, &link_path).unwrap();
+        if !create_symlink_or_skip(&target_dir, &link_path) {
+            return;
+        }
 
         // Even in central context, a symlink is a symlink
         let (kind, _) = detect_link_type(&link_path, true);
@@ -858,7 +898,9 @@ mod tests {
 
         // Symlink it into the agent skills dir
         let link = skills_dir.join("my-skill");
-        symlink(central_dir.join("my-skill"), &link).unwrap();
+        if !create_symlink_or_skip(central_dir.join("my-skill"), &link) {
+            return;
+        }
 
         let skills = scan_directory(&skills_dir, false);
         assert_eq!(skills.len(), 1);
@@ -1100,10 +1142,20 @@ mod tests {
 
         let claude_root = tmp.path().join(".claude");
         let user_root = claude_root.join("skills");
-        let plugin_a_root = claude_root.join("plugins/cache/publisher-a/plugin-a/1.0.0");
-        let plugin_b_root = claude_root.join("plugins/cache/publisher-b/plugin-b/2.0.0");
+        let plugin_a_root = claude_root
+            .join("plugins")
+            .join("cache")
+            .join("publisher-a")
+            .join("plugin-a")
+            .join("1.0.0");
+        let plugin_b_root = claude_root
+            .join("plugins")
+            .join("cache")
+            .join("publisher-b")
+            .join("plugin-b")
+            .join("2.0.0");
         let plugin_a_skill_root = plugin_a_root.join("skills");
-        let plugin_b_skill_root = plugin_b_root.join(".claude/skills");
+        let plugin_b_skill_root = plugin_b_root.join(".claude").join("skills");
 
         fs::create_dir_all(&user_root).unwrap();
         fs::create_dir_all(&plugin_a_skill_root).unwrap();
@@ -1266,7 +1318,10 @@ mod tests {
             .expect("user copy should still back the logical skill row");
         assert_eq!(
             stored_skill.file_path,
-            user_root.join("shared-skill/SKILL.md").to_string_lossy()
+            user_root
+                .join("shared-skill")
+                .join("SKILL.md")
+                .to_string_lossy()
         );
     }
 

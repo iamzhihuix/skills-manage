@@ -19,7 +19,7 @@ import { AgentWithStatus, SkillWithLinks } from "@/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type InstallMethod = "symlink" | "copy";
+export type InstallMethod = "auto" | "symlink" | "copy";
 
 interface InstallDialogProps {
   open: boolean;
@@ -47,7 +47,7 @@ export function InstallDialog({
   const [selectedAgentIds, setSelectedAgentIds] = useState<Set<string>>(
     new Set()
   );
-  const [installMethod, setInstallMethod] = useState<InstallMethod>("symlink");
+  const [installMethod, setInstallMethod] = useState<InstallMethod>("auto");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +63,7 @@ export function InstallDialog({
           .map((a) => a.id)
       );
       setSelectedAgentIds(initialSelection);
-      setInstallMethod("symlink");
+      setInstallMethod("auto");
       setError(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -173,6 +173,13 @@ export function InstallDialog({
               value={installMethod}
               onValueChange={(v) => setInstallMethod(v as InstallMethod)}
             >
+              <label className="flex items-center gap-2.5 cursor-pointer">
+                <RadioItem value="auto" />
+                <span className="text-sm">{t("installDialog.auto")}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t("installDialog.autoDesc")}
+                </span>
+              </label>
               <label className="flex items-center gap-2.5 cursor-pointer">
                 <RadioItem value="symlink" />
                 <span className="text-sm">{t("installDialog.symlink")}</span>

@@ -30,6 +30,7 @@ import {
 } from "@/data/officialSources";
 import { MarketplaceSkillDetailDrawer, type MarketplaceSkillDetail } from "@/components/marketplace/MarketplaceSkillDetailDrawer";
 import { GitHubRepoImportWizard } from "@/components/marketplace/GitHubRepoImportWizard";
+import type { InstallMethod } from "@/components/central/InstallDialog";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import type { GitHubRepoPreview } from "@/types";
@@ -325,7 +326,7 @@ export function MarketplaceView() {
   async function handleInstallImportedSkill(
     skillId: string,
     agentIds: string[],
-    method: "symlink" | "copy"
+    method: InstallMethod
   ) {
     await installCentralSkill(skillId, agentIds, method);
     await Promise.all([rescan(), loadCentralSkills(), ...agentIds.map((agentId) => getSkillsByAgent(agentId))]);
