@@ -20,3 +20,5 @@ coverage/
 .DS_Store
 Thumbs.db
 /tmp/
+.factory/
+AGENTS.md
