@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.9.1 - 2026-04-23
+
+Maintenance release focused on full-path display consistency and small README polish.
+
+### Fixes
+
+- Show full absolute paths in Central, Platform, Settings, Global Search, and platform-edit flows instead of collapsing paths to `~`.
+- Render Windows paths with drive letters and backslashes in display-oriented UI surfaces.
+- Keep auto-generated custom platform paths aligned with the detected home-directory style on each platform.
+
+### Improvements
+
+- Add a `Star History` section to the English and Chinese READMEs.
+- Extend path helper tests and affected UI assertions to cover the new display rules.
+
 ## 0.9.0 - 2026-04-23
 
 Cross-platform release centered on Windows support, universal macOS packaging, and reliability fixes.

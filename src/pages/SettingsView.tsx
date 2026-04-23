@@ -23,12 +23,12 @@ import { PlatformDialog } from "@/components/settings/PlatformDialog";
 import { Input } from "@/components/ui/input";
 import { AgentWithStatus, ScanDirectory } from "@/types";
 import { AI_PROVIDERS, REGION_LABELS, RegionId } from "@/data/aiProviders";
-import { compactHomePath } from "@/lib/path";
+import { deriveHomeDir, formatPathForDisplay, joinPathForDisplay } from "@/lib/path";
 
 // ─── App constants ────────────────────────────────────────────────────────────
 
-const APP_VERSION = "0.9.0";
-const DB_PATH = "~/.skillsmanage/db.sqlite";
+const APP_VERSION = "0.9.1";
+const DB_PATH_FALLBACK = "~/.skillsmanage/db.sqlite";
 
 /** Catppuccin Lavender hex per flavor — used for visual preview dots on flavor buttons (default accent). */
 const FLAVOR_COLORS: Record<CatppuccinFlavor, string> = {
@@ -78,7 +78,7 @@ function ScanDirectoryRow({ dir, onRemove, onToggle, isRemoving }: ScanDirectory
     <div className="flex items-center gap-3 py-2.5 px-4 border-b border-border/50 last:border-0">
       <FolderOpen className="size-4 text-muted-foreground shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium truncate">{compactHomePath(dir.path)}</div>
+        <div className="text-sm font-medium truncate">{formatPathForDisplay(dir.path)}</div>
         {dir.label && (
           <div className="text-xs text-muted-foreground mt-0.5">{dir.label}</div>
         )}
@@ -133,7 +133,7 @@ function CustomPlatformRow({ agent, onEdit, onRemove, isRemoving }: CustomPlatfo
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{agent.display_name}</div>
         <div className="text-xs text-muted-foreground truncate mt-0.5">
-          {compactHomePath(agent.global_skills_dir)}
+          {formatPathForDisplay(agent.global_skills_dir)}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -193,6 +193,21 @@ export function SettingsView() {
 
   // Custom agents are those that are not built-in.
   const customAgents = agents.filter((a) => !a.is_builtin);
+  const homeDir = useMemo(() => {
+    const candidates = [
+      agents.find((agent) => agent.id === "central")?.global_skills_dir,
+      ...scanDirectories.map((dir) => dir.path),
+      ...agents.map((agent) => agent.global_skills_dir),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+
+    return candidates
+      .map((candidate) => deriveHomeDir(candidate))
+      .find((candidate): candidate is string => Boolean(candidate));
+  }, [agents, scanDirectories]);
+  const dbPathDisplay = useMemo(
+    () => (homeDir ? joinPathForDisplay(homeDir, ".skillsmanage/db.sqlite") : DB_PATH_FALLBACK),
+    [homeDir]
+  );
 
   // ── Local State ────────────────────────────────────────────────────────────
 
@@ -728,7 +743,7 @@ export function SettingsView() {
                           {builtinDirs.map((dir) => (
                             <div key={dir.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/30 text-xs text-muted-foreground truncate">
                               <FolderOpen className="size-3 shrink-0" />
-                              <span className="truncate">{compactHomePath(dir.path)}</span>
+                              <span className="truncate">{formatPathForDisplay(dir.path)}</span>
                               {dir.label && <span className="shrink-0 opacity-60">· {dir.label}</span>}
                             </div>
                           ))}
@@ -760,7 +775,7 @@ export function SettingsView() {
                 <Database className="size-4 text-muted-foreground shrink-0" />
                 <div>
                   <div className="text-xs text-muted-foreground">{t("settings.dbPath")}</div>
-                  <div className="text-sm font-medium font-mono">{DB_PATH}</div>
+                  <div className="text-sm font-medium font-mono">{dbPathDisplay}</div>
                 </div>
               </div>
               {/* ── Flavor Switcher ──────────────────────────────────────── */}

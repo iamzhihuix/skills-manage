@@ -205,6 +205,10 @@ SQLite 数据库位于 `~/.skillsmanage/db.sqlite`，首次启动时会自动初
 
 漏洞反馈和数据处理说明见 [SECURITY.md](SECURITY.md)。
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=iamzhihuix/skills-manage&type=Date)](https://www.star-history.com/#iamzhihuix/skills-manage&Date)
+
 ## 许可证
 
 本项目使用 Apache License 2.0，详见 [LICENSE](LICENSE)。

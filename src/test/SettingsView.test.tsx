@@ -35,7 +35,7 @@ import { useThemeStore } from "../stores/themeStore";
 
 const mockBuiltinDir: ScanDirectory = {
   id: 1,
-  path: "~/.agents/skills/",
+  path: "/Users/test/.agents/skills/",
   label: "Central Skills",
   is_active: true,
   is_builtin: true,
@@ -44,7 +44,7 @@ const mockBuiltinDir: ScanDirectory = {
 
 const mockCustomDir: ScanDirectory = {
   id: 2,
-  path: "~/projects/my-project",
+  path: "/Users/test/projects/my-project",
   label: "My Project",
   is_active: true,
   is_builtin: false,
@@ -55,7 +55,7 @@ const mockCustomAgent: AgentWithStatus = {
   id: "custom-qclaw",
   display_name: "QClaw",
   category: "other",
-  global_skills_dir: "~/.qclaw/skills/",
+  global_skills_dir: "/Users/test/.qclaw/skills/",
   is_detected: false,
   is_builtin: false,
   is_enabled: true,
@@ -65,7 +65,7 @@ const mockBuiltinAgent: AgentWithStatus = {
   id: "claude-code",
   display_name: "Claude Code",
   category: "coding",
-  global_skills_dir: "~/.claude/skills/",
+  global_skills_dir: "/Users/test/.claude/skills/",
   is_detected: true,
   is_builtin: true,
   is_enabled: true,
@@ -361,7 +361,7 @@ describe("SettingsView", () => {
     setupMocks({ agents: [mockBuiltinAgent, mockCustomAgent] });
     renderSettingsView();
     expect(screen.getByText("QClaw")).toBeTruthy();
-    expect(screen.getByText("~/.qclaw/skills/")).toBeTruthy();
+    expect(screen.getByText("/Users/test/.qclaw/skills/")).toBeTruthy();
   });
 
   it("shows edit button for custom platforms", () => {
@@ -462,13 +462,13 @@ describe("SettingsView", () => {
   it("shows the app version in the about section", () => {
     setupMocks();
     renderSettingsView();
-    expect(screen.getByText("skills-manage v0.9.0")).toBeTruthy();
+    expect(screen.getByText("skills-manage v0.9.1")).toBeTruthy();
   });
 
   it("shows the database path in the about section", () => {
-    setupMocks();
+    setupMocks({ scanDirs: [mockBuiltinDir], agents: [mockBuiltinAgent] });
     renderSettingsView();
-    expect(screen.getByText("~/.skillsmanage/db.sqlite")).toBeTruthy();
+    expect(screen.getByText("/Users/test/.skillsmanage/db.sqlite")).toBeTruthy();
   });
 
   it("shows version label", () => {

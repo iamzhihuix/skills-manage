@@ -208,6 +208,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation command
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting and data-handling notes.
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=iamzhihuix/skills-manage&type=Date)](https://www.star-history.com/#iamzhihuix/skills-manage&Date)
+
 ## License
 
 This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE).

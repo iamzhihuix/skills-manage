@@ -61,7 +61,7 @@ const mockAgents: AgentWithStatus[] = [
     id: "claude-code",
     display_name: "Claude Code",
     category: "coding",
-    global_skills_dir: "~/.claude/skills/",
+    global_skills_dir: "/Users/test/.claude/skills/",
     is_detected: true,
     is_builtin: true,
     is_enabled: true,
@@ -70,7 +70,7 @@ const mockAgents: AgentWithStatus[] = [
     id: "cursor",
     display_name: "Cursor",
     category: "coding",
-    global_skills_dir: "~/.cursor/skills/",
+    global_skills_dir: "/Users/test/.cursor/skills/",
     is_detected: true,
     is_builtin: true,
     is_enabled: true,
@@ -79,7 +79,7 @@ const mockAgents: AgentWithStatus[] = [
     id: "central",
     display_name: "Central Skills",
     category: "central",
-    global_skills_dir: "~/.agents/skills/",
+    global_skills_dir: "/Users/test/.agents/skills/",
     is_detected: true,
     is_builtin: true,
     is_enabled: true,
@@ -222,7 +222,7 @@ describe("CentralSkillsView", () => {
 
   it("shows the central skills directory path", () => {
     renderCentralSkillsView();
-    expect(screen.getByText("~/.agents/skills/")).toBeInTheDocument();
+    expect(screen.getByText("/Users/test/.agents/skills/")).toBeInTheDocument();
   });
 
   it("shows a refresh button", () => {

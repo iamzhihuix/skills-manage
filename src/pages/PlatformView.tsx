@@ -11,7 +11,7 @@ import { UnifiedSkillCard } from "@/components/skill/UnifiedSkillCard";
 import { SkillDetailDrawer } from "@/components/skill/SkillDetailDrawer";
 import { PlatformIcon } from "@/components/platform/PlatformIcon";
 import { InstallDialog } from "@/components/central/InstallDialog";
-import { compactHomePath } from "@/lib/path";
+import { formatPathForDisplay } from "@/lib/path";
 import { cn } from "@/lib/utils";
 import { ScannedSkill, SkillWithLinks } from "@/types";
 
@@ -244,7 +244,7 @@ export function PlatformView() {
           <h1 className="text-xl font-semibold">{agent.display_name}</h1>
         </div>
         <p className="text-sm text-muted-foreground mt-0.5">
-          {compactHomePath(agent.global_skills_dir)}
+          {formatPathForDisplay(agent.global_skills_dir)}
         </p>
       </div>
 

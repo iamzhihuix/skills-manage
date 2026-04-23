@@ -1,7 +1,10 @@
 import {
   compactHomePath,
+  deriveHomeDir,
   describeSkillsPattern,
+  formatPathForDisplay,
   getPathBasename,
+  joinPathForDisplay,
   normalizePathSeparators,
 } from "@/lib/path";
 
@@ -25,6 +28,39 @@ describe("path helpers", () => {
 
   it("keeps tilde paths stable", () => {
     expect(compactHomePath("~/.skillsmanage/db.sqlite")).toBe("~/.skillsmanage/db.sqlite");
+  });
+
+  it("keeps unix paths full for display", () => {
+    expect(formatPathForDisplay("/Users/alice/.agents/skills")).toBe(
+      "/Users/alice/.agents/skills"
+    );
+    expect(formatPathForDisplay("/home/alice/projects/demo")).toBe(
+      "/home/alice/projects/demo"
+    );
+  });
+
+  it("renders windows display paths with drive letters and backslashes", () => {
+    expect(formatPathForDisplay("C:/Users/alice/.cursor/skills")).toBe(
+      "C:\\Users\\alice\\.cursor\\skills"
+    );
+    expect(formatPathForDisplay("C:\\Users\\alice\\.claude\\skills")).toBe(
+      "C:\\Users\\alice\\.claude\\skills"
+    );
+  });
+
+  it("derives home directories from unix and windows paths", () => {
+    expect(deriveHomeDir("/Users/alice/.agents/skills")).toBe("/Users/alice");
+    expect(deriveHomeDir("/home/alice/projects/demo")).toBe("/home/alice");
+    expect(deriveHomeDir("C:/Users/alice/.cursor/skills")).toBe("C:\\Users\\alice");
+  });
+
+  it("joins relative paths using platform-native display style", () => {
+    expect(joinPathForDisplay("/Users/alice", ".skillsmanage/db.sqlite")).toBe(
+      "/Users/alice/.skillsmanage/db.sqlite"
+    );
+    expect(joinPathForDisplay("C:\\Users\\alice", ".skillsmanage/db.sqlite")).toBe(
+      "C:\\Users\\alice\\.skillsmanage\\db.sqlite"
+    );
   });
 
   it("extracts basenames for unix and windows paths", () => {

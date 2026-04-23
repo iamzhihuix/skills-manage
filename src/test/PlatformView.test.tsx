@@ -79,7 +79,7 @@ const mockAgent: AgentWithStatus = {
   id: "claude-code",
   display_name: "Claude Code",
   category: "coding",
-  global_skills_dir: "~/.claude/skills/",
+  global_skills_dir: "/Users/test/.claude/skills/",
   is_detected: true,
   is_builtin: true,
   is_enabled: true,
@@ -89,7 +89,7 @@ const mockCursorAgent: AgentWithStatus = {
   id: "cursor",
   display_name: "Cursor",
   category: "coding",
-  global_skills_dir: "~/.cursor/skills/",
+  global_skills_dir: "/Users/test/.cursor/skills/",
   is_detected: true,
   is_builtin: true,
   is_enabled: true,
@@ -338,7 +338,7 @@ describe("PlatformView", () => {
 
   it("shows platform directory path in header", () => {
     renderPlatformView();
-    expect(screen.getByText("~/.claude/skills/")).toBeInTheDocument();
+    expect(screen.getByText("/Users/test/.claude/skills/")).toBeInTheDocument();
   });
 
   // ── Skill List ────────────────────────────────────────────────────────────

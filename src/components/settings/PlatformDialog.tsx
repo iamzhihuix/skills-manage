@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -15,8 +15,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AgentWithStatus } from "@/types";
-import { compactHomePath } from "@/lib/path";
-
+import { deriveHomeDir, formatPathForDisplay, joinPathForDisplay } from "@/lib/path";
+import { usePlatformStore } from "@/stores/platformStore";
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface PlatformDialogProps {
@@ -38,7 +38,19 @@ export function PlatformDialog({
   onEdit,
 }: PlatformDialogProps) {
   const { t } = useTranslation();
+  const agents = usePlatformStore((state) => state.agents);
   const isEditMode = platform !== null;
+  const homeDir = useMemo(() => {
+    const candidates = [
+      platform?.global_skills_dir,
+      agents.find((agent) => agent.id === "central")?.global_skills_dir,
+      ...agents.map((agent) => agent.global_skills_dir),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+
+    return candidates
+      .map((candidate) => deriveHomeDir(candidate))
+      .find((candidate): candidate is string => Boolean(candidate));
+  }, [agents, platform]);
 
   const [displayName, setDisplayName] = useState("");
   const [globalSkillsDir, setGlobalSkillsDir] = useState("");
@@ -53,7 +65,7 @@ export function PlatformDialog({
   useEffect(() => {
     if (open) {
       setDisplayName(platform?.display_name ?? "");
-      setGlobalSkillsDir(platform ? compactHomePath(platform.global_skills_dir) : "");
+      setGlobalSkillsDir(platform ? formatPathForDisplay(platform.global_skills_dir) : "");
       setDirManuallyEdited(isEditMode);
       setCategory((platform?.category as "coding" | "lobster") ?? "coding");
       setNameError(null);
@@ -132,7 +144,13 @@ export function PlatformDialog({
                 // Auto-generate path from name if user hasn't manually edited it
                 if (!dirManuallyEdited && !isEditMode) {
                   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-                  setGlobalSkillsDir(slug ? `~/.${slug}/skills/` : "");
+                  setGlobalSkillsDir(
+                    slug
+                      ? homeDir
+                        ? joinPathForDisplay(homeDir, `.${slug}/skills/`)
+                        : `~/.${slug}/skills/`
+                      : ""
+                  );
                 }
               }}
               disabled={isSubmitting}

@@ -16,6 +16,7 @@ import { AgentWithStatus, ScannedSkill, SkillWithLinks } from "@/types";
 import { GitHubRepoImportWizard } from "@/components/marketplace/GitHubRepoImportWizard";
 import { useMarketplaceStore } from "@/stores/marketplaceStore";
 import { VirtualizedList } from "@/components/ui/virtualized-list";
+import { formatPathForDisplay } from "@/lib/path";
 import { buildSearchText, normalizeSearchQuery } from "@/lib/search";
 import { isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
     id: "claude-code",
     display_name: "Claude Code",
     category: "coding",
-    global_skills_dir: "~/.claude/skills/",
+    global_skills_dir: "/Users/browser/.claude/skills/",
     is_detected: true,
     is_builtin: true,
     is_enabled: true,
@@ -34,7 +35,7 @@ const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
     id: "cursor",
     display_name: "Cursor",
     category: "coding",
-    global_skills_dir: "~/.cursor/skills/",
+    global_skills_dir: "/Users/browser/.cursor/skills/",
     is_detected: true,
     is_builtin: true,
     is_enabled: true,
@@ -43,7 +44,7 @@ const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
     id: "central",
     display_name: "Central Skills",
     category: "central",
-    global_skills_dir: "~/.agents/skills/",
+    global_skills_dir: "/Users/browser/.agents/skills/",
     is_detected: true,
     is_builtin: true,
     is_enabled: true,
@@ -179,6 +180,9 @@ export function CentralSkillsView() {
   const agents = shouldUseBrowserFixtures
     ? BROWSER_FIXTURE_AGENTS
     : (rawAgents ?? EMPTY_AGENTS);
+  const centralSkillsDir = formatPathForDisplay(
+    agents.find((agent) => agent.id === "central")?.global_skills_dir ?? t("central.path")
+  );
   const isLoading = shouldUseBrowserFixtures ? false : rawIsLoading ?? false;
   const loadCentralSkills = rawLoadCentralSkills ?? noopLoadCentralSkills;
   const installSkill =
@@ -419,7 +423,7 @@ export function CentralSkillsView() {
             </Button>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {t("central.path")}
+            {centralSkillsDir}
           </p>
         </div>
         <Button variant="outline" onClick={() => setIsGitHubImportOpen(true)}>
