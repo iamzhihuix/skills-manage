@@ -422,8 +422,17 @@ pub async fn init_database(pool: &DbPool) -> Result<(), String> {
 }
 
 async fn seed_builtin_agents(pool: &DbPool) -> Result<(), String> {
-    let agents = builtin_agents();
-    let builtin_ids: Vec<&str> = agents.iter().map(|a| a.id.as_str()).collect();
+    let mut agents = builtin_agents();
+    let builtin_ids: Vec<String> = agents.iter().map(|a| a.id.clone()).collect();
+
+    // Preserve custom central skills dir if set
+    if let Ok(Some(custom_dir)) = get_setting(pool, "central_skills_dir").await {
+        if !custom_dir.trim().is_empty() {
+            if let Some(central) = agents.iter_mut().find(|a| a.id == "central") {
+                central.global_skills_dir = custom_dir;
+            }
+        }
+    }
 
     for agent in &agents {
         sqlx::query(
@@ -457,7 +466,7 @@ async fn seed_builtin_agents(pool: &DbPool) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
 
     for (id,) in &all_db_agents {
-        if !builtin_ids.contains(&id.as_str()) {
+        if !builtin_ids.iter().any(|bid| bid == id) {
             sqlx::query("DELETE FROM agents WHERE id = ? AND is_builtin = 1")
                 .bind(id)
                 .execute(pool)
@@ -474,9 +483,24 @@ async fn seed_builtin_agents(pool: &DbPool) -> Result<(), String> {
 /// be removed by the user.  `INSERT OR IGNORE` keeps the operation idempotent:
 /// if two built-in agents share the same path (codex and central both use
 /// `~/.agents/skills`) only the first insert takes effect.
+///
+/// Reads agents from DB (after `seed_builtin_agents` has run) so that a
+/// custom `central_skills_dir` setting is reflected in scan directories.
 async fn seed_builtin_scan_directories(pool: &DbPool) -> Result<(), String> {
     let now = Utc::now().to_rfc3339();
-    for agent in builtin_agents() {
+
+    // Read built-in agents from DB to pick up any custom paths
+    // (e.g. a user-configured central_skills_dir).
+    let agents: Vec<Agent> = sqlx::query_as(
+        "SELECT id, display_name, category, global_skills_dir, project_skills_dir,
+                icon_name, is_detected, is_builtin, is_enabled
+         FROM agents WHERE is_builtin = 1",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    for agent in &agents {
         sqlx::query(
             "INSERT OR IGNORE INTO scan_directories
              (path, label, is_active, is_builtin, added_at)
@@ -1368,6 +1392,21 @@ pub async fn update_agent_detected(
 ) -> Result<(), String> {
     sqlx::query("UPDATE agents SET is_detected = ? WHERE id = ?")
         .bind(is_detected)
+        .bind(agent_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Update the `global_skills_dir` for an agent.
+pub async fn update_agent_global_skills_dir(
+    pool: &DbPool,
+    agent_id: &str,
+    new_dir: &str,
+) -> Result<(), String> {
+    sqlx::query("UPDATE agents SET global_skills_dir = ? WHERE id = ?")
+        .bind(new_dir)
         .bind(agent_id)
         .execute(pool)
         .await

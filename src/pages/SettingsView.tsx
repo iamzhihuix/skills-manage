@@ -289,16 +289,32 @@ export function SettingsView() {
   const [githubPatInput, setGitHubPatInput] = useState("");
   const [githubPatMessage, setGitHubPatMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // ── Central Skills Dir state ──────────────────────────────────────────────
+  const centralSkillsDir = useSettingsStore((s) => s.centralSkillsDir);
+  const isLoadingCentralDir = useSettingsStore((s) => s.isLoadingCentralDir);
+  const isSavingCentralDir = useSettingsStore((s) => s.isSavingCentralDir);
+  const loadCentralSkillsDir = useSettingsStore((s) => s.loadCentralSkillsDir);
+  const saveCentralSkillsDir = useSettingsStore((s) => s.saveCentralSkillsDir);
+  const resetCentralSkillsDir = useSettingsStore((s) => s.resetCentralSkillsDir);
+
+  const [centralDirInput, setCentralDirInput] = useState("");
+  const [centralDirMessage, setCentralDirMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   // ── Load on mount ──────────────────────────────────────────────────────────
 
   useEffect(() => {
     loadScanDirectories();
     loadGitHubPat();
-  }, [loadScanDirectories, loadGitHubPat]);
+    loadCentralSkillsDir();
+  }, [loadScanDirectories, loadGitHubPat, loadCentralSkillsDir]);
 
   useEffect(() => {
     setGitHubPatInput(githubPat);
   }, [githubPat]);
+
+  useEffect(() => {
+    setCentralDirInput(centralSkillsDir);
+  }, [centralSkillsDir]);
 
   const isGitHubPatDirty = useMemo(() => githubPatInput.trim() !== githubPat, [githubPatInput, githubPat]);
 
@@ -448,6 +464,28 @@ export function SettingsView() {
     }
   }
 
+  const isCentralDirDirty = useMemo(() => centralDirInput.trim() !== centralSkillsDir, [centralDirInput, centralSkillsDir]);
+
+  async function handleSaveCentralDir() {
+    setCentralDirMessage(null);
+    try {
+      await saveCentralSkillsDir(centralDirInput);
+      setCentralDirMessage({ type: "success", text: t("settings.centralDirSaved") });
+    } catch (err) {
+      setCentralDirMessage({ type: "error", text: String(err) });
+    }
+  }
+
+  async function handleResetCentralDir() {
+    setCentralDirMessage(null);
+    try {
+      await resetCentralSkillsDir();
+      setCentralDirMessage({ type: "success", text: t("settings.centralDirResetDone") });
+    } catch (err) {
+      setCentralDirMessage({ type: "error", text: String(err) });
+    }
+  }
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -575,7 +613,57 @@ export function SettingsView() {
           </CardContent>
         </Card>
 
-        {/* ── Section 3: AI Provider ─────────────────────────────────────── */}
+        {/* ── Section 3: Central Skills Directory ────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <FolderOpen className="size-5 text-muted-foreground" />
+              <div>
+                <CardTitle>{t("settings.centralDirTitle")}</CardTitle>
+                <CardDescription className="mt-1">
+                  {t("settings.centralDirDesc")}
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {isLoadingCentralDir ? (
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin" />
+                {t("settings.centralDirLoading")}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">{t("settings.centralDirLabel")}</label>
+                  <Input
+                    value={centralDirInput}
+                    onChange={(e) => setCentralDirInput(e.target.value)}
+                    disabled={isSavingCentralDir}
+                  />
+                </div>
+
+                {centralDirMessage && (
+                  <p className={centralDirMessage.type === "error" ? "text-sm text-destructive" : "text-sm text-emerald-600 dark:text-emerald-400"} role="status">
+                    {centralDirMessage.text}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={handleSaveCentralDir} disabled={isSavingCentralDir || !isCentralDirDirty}>
+                    {isSavingCentralDir ? <Loader2 className="size-4 animate-spin" /> : null}
+                    <span>{t("settings.centralDirSave")}</span>
+                  </Button>
+                  <Button variant="outline" onClick={handleResetCentralDir} disabled={isSavingCentralDir || !centralSkillsDir}>
+                    <span>{t("settings.centralDirReset")}</span>
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ── Section 4: AI Provider ─────────────────────────────────────── */}
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">

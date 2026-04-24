@@ -8,7 +8,8 @@ use serde_json;
 use tauri::{Emitter, State};
 
 use crate::db::{self, DbPool};
-use crate::path_utils::{central_skills_dir, path_to_string, resolve_home_dir};
+use crate::path_utils::{path_to_string, resolve_home_dir};
+use crate::commands::settings;
 use crate::AppState;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -479,7 +480,7 @@ pub async fn start_project_scan(
     let patterns = platform_skill_patterns(pool);
 
     // Determine central skills dir.
-    let central_dir = central_skills_dir();
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(pool).await?);
 
     // Filter to enabled roots that exist.
     let enabled_roots: Vec<&ScanRoot> = roots.iter().filter(|r| r.enabled && r.exists).collect();
@@ -600,7 +601,7 @@ pub async fn get_discovered_skills(
     let rows = db::get_all_discovered_skills(pool).await?;
 
     // Convert DB rows to DiscoveredSkill structs, adding is_already_central.
-    let central_dir = central_skills_dir();
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(pool).await?);
 
     let skills: Vec<DiscoveredSkill> = rows
         .into_iter()
@@ -680,7 +681,7 @@ pub async fn import_discovered_skill_to_central(
         .ok_or_else(|| format!("Discovered skill '{}' not found", discovered_skill_id))?;
 
     // Determine central dir.
-    let central_dir = central_skills_dir();
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(pool).await?);
 
     // Extract the original skill directory name (last component of dir_path).
     let skill_dir_name = Path::new(&skill.dir_path)

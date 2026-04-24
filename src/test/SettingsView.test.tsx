@@ -115,6 +115,13 @@ function setupMocks({
       loadGitHubPat,
       saveGitHubPat,
       clearGitHubPat,
+      centralSkillsDir: "",
+      defaultCentralSkillsDir: "",
+      isLoadingCentralDir: false,
+      isSavingCentralDir: false,
+      loadCentralSkillsDir: vi.fn(),
+      saveCentralSkillsDir: vi.fn(),
+      resetCentralSkillsDir: vi.fn(),
       clearError: vi.fn(),
     })
   );

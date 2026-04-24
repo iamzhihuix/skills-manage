@@ -1,11 +1,12 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
 use super::github_import;
-use crate::path_utils::central_skills_dir;
+use crate::commands::settings;
 use crate::AppState;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -351,7 +352,7 @@ async fn sync_registry_impl(
     };
 
     // Check which skills are already installed locally
-    let central_dir = central_skills_dir();
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(pool).await?);
 
     // Upsert skills into marketplace_skills
     for skill in &skills {
@@ -519,7 +520,8 @@ pub async fn install_marketplace_skill(
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
     // Create directory and write SKILL.md
-    let skill_dir = central_skills_dir().join(&skill.name);
+    let central_dir = PathBuf::from(settings::get_central_skills_dir_impl(&state.db).await?);
+    let skill_dir = central_dir.join(&skill.name);
     std::fs::create_dir_all(&skill_dir)
         .map_err(|e| format!("Failed to create directory: {}", e))?;
 
