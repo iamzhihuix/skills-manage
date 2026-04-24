@@ -589,6 +589,31 @@ fn detect_explanation_api_protocol(api_url: &str) -> ExplanationApiProtocol {
     ExplanationApiProtocol::Unknown
 }
 
+/// Resolve API protocol: explicit user preference overrides URL auto-detection.
+fn resolve_api_protocol(
+    api_url: &str,
+    explicit_protocol: Option<&str>,
+) -> ExplanationApiProtocol {
+    match explicit_protocol {
+        Some("openai") => ExplanationApiProtocol::OpenAiCompatible,
+        Some("anthropic") => ExplanationApiProtocol::AnthropicCompatible,
+        _ => detect_explanation_api_protocol(api_url),
+    }
+}
+
+fn resolve_custom_url(raw_url: &str, protocol: &ExplanationApiProtocol) -> String {
+    let trimmed = raw_url.trim();
+    if !trimmed.ends_with("/v1") {
+        return trimmed.to_string();
+    }
+    match protocol {
+        ExplanationApiProtocol::OpenAiCompatible => trimmed.to_string() + "/chat/completions",
+        ExplanationApiProtocol::AnthropicCompatible | ExplanationApiProtocol::Unknown => {
+            trimmed.to_string() + "/messages"
+        }
+    }
+}
+
 /// Error kind for AI explanation network failures, used by the frontend
 /// to render targeted UI (friendly summary + expandable details).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -696,26 +721,15 @@ fn format_reqwest_error(e: &reqwest::Error) -> String {
 
 #[tauri::command]
 pub async fn explain_skill(state: State<'_, AppState>, content: String) -> Result<String, String> {
-    // Read dynamic provider settings
-    async fn get_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
-        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-            .bind(key)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .filter(|v| !v.trim().is_empty())
-    }
-
-    let api_key = get_setting(&state.db, "ai_api_key")
+    let api_key = get_provider_setting(&state.db, "ai_api_key")
         .await
         .ok_or_else(|| "请先在设置中配置 AI API Key".to_string())?;
 
-    let api_url = get_setting(&state.db, "ai_api_url")
+    let api_url = get_provider_setting(&state.db, "ai_api_url")
         .await
         .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".to_string());
 
-    let model = get_setting(&state.db, "ai_model")
+    let model = get_provider_setting(&state.db, "ai_model")
         .await
         .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
 
@@ -726,7 +740,6 @@ pub async fn explain_skill(state: State<'_, AppState>, content: String) -> Resul
         .build()
         .map_err(|e| e.to_string())?;
 
-    // Truncate content if too long
     let truncated = if content.len() > 8000 {
         format!("{}...\n\n(内容已截断)", &content[..8000])
     } else {
@@ -747,9 +760,12 @@ pub async fn explain_skill(state: State<'_, AppState>, content: String) -> Resul
         }],
     };
 
-    let protocol = detect_explanation_api_protocol(&api_url);
+    let explicit_protocol_opt = get_provider_setting(&state.db, "ai_protocol").await;
+    let explicit_protocol = explicit_protocol_opt.as_deref();
+    let protocol = resolve_api_protocol(&api_url, explicit_protocol);
+    let resolved_url = resolve_custom_url(&api_url, &protocol);
     let mut req_builder = client
-        .post(&api_url)
+        .post(&resolved_url)
         .header("content-type", "application/json");
 
     match protocol {
@@ -809,6 +825,86 @@ pub async fn explain_skill(state: State<'_, AppState>, content: String) -> Resul
     }
 
     Err(format!("无法解析响应: {}", &body[..body.len().min(500)]))
+}
+
+// ─── Test AI Connection ─────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_ai_connection(state: State<'_, AppState>) -> Result<String, String> {
+    let api_key = get_provider_setting(&state.db, "ai_api_key")
+        .await
+        .ok_or_else(|| "请先在设置中配置 AI API Key".to_string())?;
+
+    let api_url = get_provider_setting(&state.db, "ai_api_url")
+        .await
+        .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".to_string());
+
+    let model = get_provider_setting(&state.db, "ai_model")
+        .await
+        .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manage/0.9.1")
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let request = serde_json::json!({
+        "model": model,
+        "max_tokens": 1,
+        "messages": [{
+            "role": "user",
+            "content": "OK"
+        }]
+    });
+
+    let explicit_protocol_opt = get_provider_setting(&state.db, "ai_protocol").await;
+    let explicit_protocol = explicit_protocol_opt.as_deref();
+    let protocol = resolve_api_protocol(&api_url, explicit_protocol);
+    let resolved_url = resolve_custom_url(&api_url, &protocol);
+    let mut req_builder = client
+        .post(&resolved_url)
+        .header("content-type", "application/json");
+
+    match protocol {
+        ExplanationApiProtocol::AnthropicCompatible | ExplanationApiProtocol::Unknown => {
+            req_builder = req_builder
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01");
+        }
+        ExplanationApiProtocol::OpenAiCompatible => {
+            req_builder = req_builder.header("authorization", format!("Bearer {}", api_key));
+        }
+    }
+
+    let resp = req_builder
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| format!("API 请求失败: {}", format_reqwest_error(&e)))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("API 返回错误 {}: {}", status, body));
+    }
+
+    // Parse and check response body — just enough to confirm it's a valid API response
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
+
+    // Accept either Anthropic or OpenAI response shape
+    let val: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|_| format!("无法解析响应: {}", &body[..body.len().min(200)]))?;
+
+    if val.get("content").is_some() || val.get("choices").is_some() {
+        Ok("Connection OK".to_string())
+    } else {
+        Err(format!("无法识别的响应格式: {}", &body[..body.len().min(200)]))
+    }
 }
 
 // ─── Streaming AI Explanation ────────────────────────────────────────────────
@@ -938,6 +1034,12 @@ async fn get_ai_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
         .filter(|v| !v.trim().is_empty())
 }
 
+async fn get_provider_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
+    let provider = get_ai_setting(pool, "ai_provider").await.unwrap_or_default();
+    let suffixed = format!("{}__{}", key, provider);
+    get_ai_setting(pool, &suffixed).await
+}
+
 /// Helper: truncate skill content to 8000 chars.
 fn truncate_content(content: &str) -> String {
     if content.len() > 8000 {
@@ -1047,15 +1149,15 @@ async fn do_explain_skill_stream(
     content: &str,
     lang: &str,
 ) -> Result<(), String> {
-    let api_key = get_ai_setting(pool, "ai_api_key")
+    let api_key = get_provider_setting(pool, "ai_api_key")
         .await
         .ok_or_else(|| "请先在设置中配置 AI API Key".to_string())?;
 
-    let api_url = get_ai_setting(pool, "ai_api_url")
+    let api_url = get_provider_setting(pool, "ai_api_url")
         .await
         .unwrap_or_else(|| "https://api.anthropic.com/v1/messages".to_string());
 
-    let model = get_ai_setting(pool, "ai_model")
+    let model = get_provider_setting(pool, "ai_model")
         .await
         .unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
 
@@ -1063,7 +1165,10 @@ async fn do_explain_skill_stream(
         .await
         .unwrap_or_default();
 
-    let protocol = detect_explanation_api_protocol(&api_url);
+    let explicit_protocol_opt = get_provider_setting(pool, "ai_protocol").await;
+    let explicit_protocol = explicit_protocol_opt.as_deref();
+    let protocol = resolve_api_protocol(&api_url, explicit_protocol);
+    let resolved_url = resolve_custom_url(&api_url, &protocol);
     let is_anthropic = matches!(
         protocol,
         ExplanationApiProtocol::AnthropicCompatible | ExplanationApiProtocol::Unknown
@@ -1083,12 +1188,12 @@ async fn do_explain_skill_stream(
 
     // Try primary endpoint; on connect-layer failure, try fallback once
     let resp =
-        match send_stream_request(&client, &api_url, &api_key, &body, is_anthropic, false).await {
+        match send_stream_request(&client, &resolved_url, &api_key, &body, is_anthropic, false).await {
             Ok(r) => r,
             Err(err_info) => {
                 // Only retry on connect-layer errors that are retryable
                 if err_info.retryable {
-                    if let Some(fallback_url) = get_fallback_endpoint(&provider, &api_url) {
+                    if let Some(fallback_url) = get_fallback_endpoint(&provider, &resolved_url) {
                         eprintln!(
                             "[explain] primary endpoint failed ({:?}), trying fallback: {}",
                             err_info.kind, fallback_url
@@ -1354,7 +1459,7 @@ mod tests {
         add_registry_impl, cache_skill_explanation, classify_reqwest_error,
         detect_explanation_api_protocol, format_reqwest_error, get_fallback_endpoint,
         load_cached_skill_explanation, marketplace_skills_from_candidates,
-        registry_has_cached_skills, search_marketplace_skills_impl, sync_registry_impl,
+        registry_has_cached_skills, resolve_api_protocol, resolve_custom_url, search_marketplace_skills_impl, sync_registry_impl,
         ExplanationApiProtocol, ExplanationErrorKind, RegistryCacheMetadata, RegistrySyncStatus,
         SyncRegistryOptions,
     };
@@ -1877,5 +1982,71 @@ mod tests {
         assert!(registry_has_cached_skills(&pool, &registry.id)
             .await
             .expect("cached"));
+    }
+
+    // ── resolve_api_protocol tests ─────────────────────────────────────────
+
+    #[test]
+    fn resolve_api_protocol_explicit_overrides_detection() {
+        assert_eq!(
+            resolve_api_protocol("https://example.com/v1/messages", Some("openai")),
+            ExplanationApiProtocol::OpenAiCompatible
+        );
+    }
+
+    #[test]
+    fn resolve_api_protocol_falls_back_to_detection_when_none() {
+        assert_eq!(
+            resolve_api_protocol("https://example.com/v1/messages", None),
+            ExplanationApiProtocol::AnthropicCompatible
+        );
+        assert_eq!(
+            resolve_api_protocol("https://example.com/v1/chat/completions", None),
+            ExplanationApiProtocol::OpenAiCompatible
+        );
+    }
+
+    #[test]
+    fn resolve_api_protocol_empty_string_same_as_none() {
+        assert_eq!(
+            resolve_api_protocol("https://example.com/v1/messages", Some("")),
+            ExplanationApiProtocol::AnthropicCompatible
+        );
+    }
+
+    #[test]
+    fn resolve_api_protocol_anthropic_explicit() {
+        assert_eq!(
+            resolve_api_protocol("https://example.com/v1/chat/completions", Some("anthropic")),
+            ExplanationApiProtocol::AnthropicCompatible
+        );
+    }
+
+    #[test]
+    fn resolve_custom_url_appends_path_for_v1_suffix() {
+        assert_eq!(
+            resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::OpenAiCompatible),
+            "https://api.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::AnthropicCompatible),
+            "https://api.example.com/v1/messages"
+        );
+        assert_eq!(
+            resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::Unknown),
+            "https://api.example.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn resolve_custom_url_leaves_non_v1_unchanged() {
+        assert_eq!(
+            resolve_custom_url("https://api.example.com/v1/chat/completions", &ExplanationApiProtocol::OpenAiCompatible),
+            "https://api.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            resolve_custom_url("https://api.anthropic.com/v1/messages", &ExplanationApiProtocol::AnthropicCompatible),
+            "https://api.anthropic.com/v1/messages"
+        );
     }
 }

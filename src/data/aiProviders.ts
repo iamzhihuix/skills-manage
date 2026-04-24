@@ -1,5 +1,7 @@
 export type RegionId = "cn" | "intl";
 
+export type ApiProtocol = "anthropic" | "openai";
+
 export interface AiProvider {
   id: string;
   name: { zh: string; en: string };
@@ -68,9 +70,31 @@ export const AI_PROVIDERS: AiProvider[] = [
   {
     id: "custom",
     name: { zh: "自定义", en: "Custom" },
-    regions: ["cn", "intl"],
+    regions: ["intl"],
     endpoints: {},
     defaultModel: "",
+  },
+];
+
+export const API_PROTOCOLS: {
+  id: ApiProtocol | "";
+  label: { zh: string; en: string };
+  desc: { zh: string; en: string };
+}[] = [
+  {
+    id: "",
+    label: { zh: "自动", en: "Auto" },
+    desc: { zh: "根据 URL 自动检测", en: "Auto-detect from URL" },
+  },
+  {
+    id: "anthropic",
+    label: { zh: "Anthropic", en: "Anthropic" },
+    desc: { zh: "x-api-key 认证", en: "x-api-key auth" },
+  },
+  {
+    id: "openai",
+    label: { zh: "OpenAI", en: "OpenAI" },
+    desc: { zh: "Bearer Token 认证", en: "Bearer token auth" },
   },
 ];
 
