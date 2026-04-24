@@ -298,7 +298,41 @@
     },
     "language": "语言",
     "chinese": "中文",
-    "english": "English"
+    "english": "English",
+    "aiProviderTitle": "AI 提供商",
+    "aiProviderDesc": "为技能解释功能配置 AI 服务，支持 Anthropic 和 OpenAI 兼容接口。",
+    "aiProviderLabel": "提供商",
+    "aiProvider": {
+      "claude": "Claude",
+      "glm": "智谱 GLM",
+      "minimax": "MiniMax",
+      "kimi": "Kimi",
+      "deepseek": "DeepSeek",
+      "openrouter": "OpenRouter",
+      "custom": "自定义"
+    },
+    "aiRegionLabel": "区域",
+    "aiRegion": {
+      "cn": "国内",
+      "intl": "国际"
+    },
+    "aiApiKeyLabel": "API Key",
+    "aiModelLabel": "模型",
+    "aiModelPlaceholder": "模型名称",
+    "aiApiFormatLabel": "API 格式",
+    "aiProtocol": {
+      "auto": "自动",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI"
+    },
+    "aiApiUrlLabel": "API URL",
+    "aiTestButton": "测试连接",
+    "aiTestTesting": "测试中...",
+    "aiTestSuccess": "连接成功",
+    "aiTestConnectionVerified": "连接验证通过",
+    "aiTestEnterUrl": "请先输入 API URL",
+    "aiTestDetails": "查看详情",
+    "aiTestRegionTip": "提示：可在上方切换区域端点后重试（当前：{{region}}）"
   },
   "addDir": {
     "title": "添加项目目录",

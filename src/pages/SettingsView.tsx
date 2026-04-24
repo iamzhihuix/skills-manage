@@ -234,6 +234,7 @@ export function SettingsView() {
   const [aiCustomUrl, setAiCustomUrl] = useState("");
   const [aiProtocol, setAiProtocol] = useState<ApiProtocol | "">("");
   const [aiLoaded, setAiLoaded] = useState(false);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const [providerLoading, setProviderLoading] = useState(false);
 
   // Load AI settings on mount
@@ -263,9 +264,9 @@ export function SettingsView() {
     })();
   }, []);
 
-  // Save AI settings when changed
+  // Save AI settings when changed (only after user interaction)
   useEffect(() => {
-    if (!aiLoaded) return;
+    if (!aiLoaded || !hasUserInteracted) return;
     const save = async () => {
       try {
         await invoke("set_setting", { key: "ai_provider", value: aiProvider });
@@ -280,12 +281,13 @@ export function SettingsView() {
       } catch { /* ignore */ }
     };
     save();
-  }, [aiProvider, aiRegion, aiApiKey, aiModel, aiCustomUrl, aiProtocol, aiLoaded]);
+  }, [aiProvider, aiRegion, aiApiKey, aiModel, aiCustomUrl, aiProtocol, aiLoaded, hasUserInteracted]);
 
   // When provider or region changes, update model to default
   async function handleProviderChange(id: string) {
     if (providerLoading) return;
     setProviderLoading(true);
+    setAiLoaded(false);           // block save until new config is loaded
     setAiProvider(id);
     setAiTestResult(null);
     const p = AI_PROVIDERS.find((x) => x.id === id);
@@ -309,6 +311,7 @@ export function SettingsView() {
       setAiCustomUrl("");
       setAiProtocol("");
     } finally {
+      setAiLoaded(true);
       setProviderLoading(false);
     }
   }
@@ -643,7 +646,8 @@ export function SettingsView() {
                 <label className="text-xs text-muted-foreground mb-2 block">{t("settings.aiProviderLabel")}</label>
                 <div className="flex flex-wrap gap-1.5">
                   {AI_PROVIDERS.map((p) => (
-                    <button key={p.id} disabled={providerLoading} onClick={() => handleProviderChange(p.id)} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProvider === p.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"}`}>
+                    <button key={p.id} disabled={providerLoading} onClick={() => { setHasUserInteracted(true); handleProviderChange(p.id); }} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProvider === p.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"} ${providerLoading ? "opacity-50 cursor-not-allowed" : ""}`}>
+                      {providerLoading && aiProvider === p.id ? <Loader2 className="size-3 animate-spin inline mr-1" /> : null}
                       {t(`settings.aiProvider.${p.id}`)}
                     </button>
                   ))}
@@ -654,7 +658,7 @@ export function SettingsView() {
                   <label className="text-xs text-muted-foreground mb-2 block">{t("settings.aiRegionLabel")}</label>
                   <div className="flex gap-1.5">
                     {currentProvider.regions.map((r) => (
-                      <button key={r} onClick={() => setAiRegion(r)} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiRegion === r ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>
+                      <button key={r} onClick={() => { setHasUserInteracted(true); setAiRegion(r); }} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiRegion === r ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>
                         {t(`settings.aiRegion.${r}`)}
                       </button>
                     ))}
@@ -664,7 +668,7 @@ export function SettingsView() {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">{t("settings.aiApiKeyLabel")}</label>
                 <div className="relative">
-                  <Input type={showKey ? "text" : "password"} placeholder="sk-..." value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} className="pr-9" />
+                  <Input type={showKey ? "text" : "password"} placeholder="sk-..." value={aiApiKey} onChange={(e) => { setHasUserInteracted(true); setAiApiKey(e.target.value); }} className="pr-9" />
                   <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                     {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -672,14 +676,14 @@ export function SettingsView() {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">{t("settings.aiModelLabel")}</label>
-                <Input placeholder={t("settings.aiModelPlaceholder")} value={aiModel} onChange={(e) => setAiModel(e.target.value)} />
+                <Input placeholder={t("settings.aiModelPlaceholder")} value={aiModel} onChange={(e) => { setHasUserInteracted(true); setAiModel(e.target.value); }} />
               </div>
               {aiProvider === "custom" && (
                 <div>
                   <label className="text-xs text-muted-foreground mb-2 block">{t("settings.aiApiFormatLabel")}</label>
                   <div className="flex flex-wrap gap-1.5">
                     {API_PROTOCOLS.map((proto) => (
-                      <button key={proto.id} onClick={() => setAiProtocol(proto.id as ApiProtocol | "")} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProtocol === proto.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"}`}>
+                      <button key={proto.id} onClick={() => { setHasUserInteracted(true); setAiProtocol(proto.id as ApiProtocol | ""); }} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProtocol === proto.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"}`}>
                         {t(`settings.aiProtocol.${proto.id || "auto"}`)}
                       </button>
                     ))}
@@ -689,7 +693,7 @@ export function SettingsView() {
               {aiProvider === "custom" && (
                 <div>
                   <label className="text-xs text-muted-foreground mb-1 block">{t("settings.aiApiUrlLabel")}</label>
-                  <Input placeholder="https://..." value={aiCustomUrl} onChange={(e) => setAiCustomUrl(e.target.value)} />
+                  <Input placeholder="https://..." value={aiCustomUrl} onChange={(e) => { setHasUserInteracted(true); setAiCustomUrl(e.target.value); }} />
                 </div>
               )}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">

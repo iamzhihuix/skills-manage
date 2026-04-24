@@ -298,7 +298,41 @@
     },
     "language": "Language",
     "chinese": "中文",
-    "english": "English"
+    "english": "English",
+    "aiProviderTitle": "AI Provider",
+    "aiProviderDesc": "Configure AI service for skill explanation. Supports Anthropic & OpenAI-compatible APIs.",
+    "aiProviderLabel": "Provider",
+    "aiProvider": {
+      "claude": "Claude",
+      "glm": "Zhipu GLM",
+      "minimax": "MiniMax",
+      "kimi": "Kimi",
+      "deepseek": "DeepSeek",
+      "openrouter": "OpenRouter",
+      "custom": "Custom"
+    },
+    "aiRegionLabel": "Region",
+    "aiRegion": {
+      "cn": "China",
+      "intl": "International"
+    },
+    "aiApiKeyLabel": "API Key",
+    "aiModelLabel": "Model",
+    "aiModelPlaceholder": "Model name",
+    "aiApiFormatLabel": "API Format",
+    "aiProtocol": {
+      "auto": "Auto",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI"
+    },
+    "aiApiUrlLabel": "API URL",
+    "aiTestButton": "Test Connection",
+    "aiTestTesting": "Testing...",
+    "aiTestSuccess": "Connection OK",
+    "aiTestConnectionVerified": "Connection verified",
+    "aiTestEnterUrl": "Please enter API URL first",
+    "aiTestDetails": "Details",
+    "aiTestRegionTip": "Tip: Try switching the region endpoint above (current: {{region}})"
   },
   "addDir": {
     "title": "Add Project Directory",

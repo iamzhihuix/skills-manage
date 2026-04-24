@@ -608,9 +608,8 @@ fn resolve_custom_url(raw_url: &str, protocol: &ExplanationApiProtocol) -> Strin
     }
     match protocol {
         ExplanationApiProtocol::OpenAiCompatible => trimmed.to_string() + "/chat/completions",
-        ExplanationApiProtocol::AnthropicCompatible | ExplanationApiProtocol::Unknown => {
-            trimmed.to_string() + "/messages"
-        }
+        ExplanationApiProtocol::AnthropicCompatible => trimmed.to_string() + "/messages",
+        ExplanationApiProtocol::Unknown => trimmed.to_string(),
     }
 }
 
@@ -2034,7 +2033,7 @@ mod tests {
         );
         assert_eq!(
             resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::Unknown),
-            "https://api.example.com/v1/messages"
+            "https://api.example.com/v1"
         );
     }
 
