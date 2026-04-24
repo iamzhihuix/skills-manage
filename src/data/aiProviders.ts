@@ -56,7 +56,7 @@ export const AI_PROVIDERS: AiProvider[] = [
     endpoints: {
       cn: "https://api.deepseek.com/anthropic/v1/messages",
     },
-    defaultModel: "DeepSeek-V3.2",
+    defaultModel: "deepseek-v4-flash",
   },
   {
     id: "openrouter",
