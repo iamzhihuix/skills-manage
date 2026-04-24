@@ -590,10 +590,7 @@ fn detect_explanation_api_protocol(api_url: &str) -> ExplanationApiProtocol {
 }
 
 /// Resolve API protocol: explicit user preference overrides URL auto-detection.
-fn resolve_api_protocol(
-    api_url: &str,
-    explicit_protocol: Option<&str>,
-) -> ExplanationApiProtocol {
+fn resolve_api_protocol(api_url: &str, explicit_protocol: Option<&str>) -> ExplanationApiProtocol {
     match explicit_protocol {
         Some("openai") => ExplanationApiProtocol::OpenAiCompatible,
         Some("anthropic") => ExplanationApiProtocol::AnthropicCompatible,
@@ -902,7 +899,10 @@ pub async fn test_ai_connection(state: State<'_, AppState>) -> Result<String, St
     if val.get("content").is_some() || val.get("choices").is_some() {
         Ok("Connection OK".to_string())
     } else {
-        Err(format!("无法识别的响应格式: {}", &body[..body.len().min(200)]))
+        Err(format!(
+            "无法识别的响应格式: {}",
+            &body[..body.len().min(200)]
+        ))
     }
 }
 
@@ -1034,7 +1034,9 @@ async fn get_ai_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
 }
 
 async fn get_provider_setting(pool: &crate::db::DbPool, key: &str) -> Option<String> {
-    let provider = get_ai_setting(pool, "ai_provider").await.unwrap_or_default();
+    let provider = get_ai_setting(pool, "ai_provider")
+        .await
+        .unwrap_or_default();
     let suffixed = format!("{}__{}", key, provider);
     get_ai_setting(pool, &suffixed).await
 }
@@ -1187,7 +1189,9 @@ async fn do_explain_skill_stream(
 
     // Try primary endpoint; on connect-layer failure, try fallback once
     let resp =
-        match send_stream_request(&client, &resolved_url, &api_key, &body, is_anthropic, false).await {
+        match send_stream_request(&client, &resolved_url, &api_key, &body, is_anthropic, false)
+            .await
+        {
             Ok(r) => r,
             Err(err_info) => {
                 // Only retry on connect-layer errors that are retryable
@@ -1458,9 +1462,9 @@ mod tests {
         add_registry_impl, cache_skill_explanation, classify_reqwest_error,
         detect_explanation_api_protocol, format_reqwest_error, get_fallback_endpoint,
         load_cached_skill_explanation, marketplace_skills_from_candidates,
-        registry_has_cached_skills, resolve_api_protocol, resolve_custom_url, search_marketplace_skills_impl, sync_registry_impl,
-        ExplanationApiProtocol, ExplanationErrorKind, RegistryCacheMetadata, RegistrySyncStatus,
-        SyncRegistryOptions,
+        registry_has_cached_skills, resolve_api_protocol, resolve_custom_url,
+        search_marketplace_skills_impl, sync_registry_impl, ExplanationApiProtocol,
+        ExplanationErrorKind, RegistryCacheMetadata, RegistrySyncStatus, SyncRegistryOptions,
     };
     use crate::commands::github_import::RemoteSkillCandidate;
     use crate::db;
@@ -2024,15 +2028,24 @@ mod tests {
     #[test]
     fn resolve_custom_url_appends_path_for_v1_suffix() {
         assert_eq!(
-            resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::OpenAiCompatible),
+            resolve_custom_url(
+                "https://api.example.com/v1",
+                &ExplanationApiProtocol::OpenAiCompatible
+            ),
             "https://api.example.com/v1/chat/completions"
         );
         assert_eq!(
-            resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::AnthropicCompatible),
+            resolve_custom_url(
+                "https://api.example.com/v1",
+                &ExplanationApiProtocol::AnthropicCompatible
+            ),
             "https://api.example.com/v1/messages"
         );
         assert_eq!(
-            resolve_custom_url("https://api.example.com/v1", &ExplanationApiProtocol::Unknown),
+            resolve_custom_url(
+                "https://api.example.com/v1",
+                &ExplanationApiProtocol::Unknown
+            ),
             "https://api.example.com/v1"
         );
     }
@@ -2040,11 +2053,17 @@ mod tests {
     #[test]
     fn resolve_custom_url_leaves_non_v1_unchanged() {
         assert_eq!(
-            resolve_custom_url("https://api.example.com/v1/chat/completions", &ExplanationApiProtocol::OpenAiCompatible),
+            resolve_custom_url(
+                "https://api.example.com/v1/chat/completions",
+                &ExplanationApiProtocol::OpenAiCompatible
+            ),
             "https://api.example.com/v1/chat/completions"
         );
         assert_eq!(
-            resolve_custom_url("https://api.anthropic.com/v1/messages", &ExplanationApiProtocol::AnthropicCompatible),
+            resolve_custom_url(
+                "https://api.anthropic.com/v1/messages",
+                &ExplanationApiProtocol::AnthropicCompatible
+            ),
             "https://api.anthropic.com/v1/messages"
         );
     }
