@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tauri::State;
 
@@ -67,6 +67,15 @@ pub struct SkillDetail {
     pub collections: Vec<Collection>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkillDirectoryNode {
+    pub name: String,
+    pub path: String,
+    pub relative_path: String,
+    pub is_dir: bool,
+    pub children: Vec<SkillDirectoryNode>,
+}
+
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
 
 fn system_time_to_rfc3339(time: SystemTime) -> String {
@@ -108,6 +117,76 @@ fn skill_dir_path(skill: &db::Skill) -> String {
                 .map(|path| path.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| skill.file_path.clone())
+}
+
+fn build_skill_directory_nodes(
+    root: &Path,
+    current: &Path,
+    visited_dirs: &[PathBuf],
+) -> Result<Vec<SkillDirectoryNode>, String> {
+    let entries = std::fs::read_dir(current)
+        .map_err(|e| format!("Failed to read directory '{}': {}", current.display(), e))?;
+
+    let mut nodes = Vec::new();
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| format!("Failed to read directory entry in '{}': {}", current.display(), e))?;
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|e| format!("Failed to read metadata for '{}': {}", path.display(), e))?;
+        let is_dir = std::fs::metadata(&path)
+            .map(|target_metadata| target_metadata.file_type().is_dir())
+            .unwrap_or_else(|_| metadata.file_type().is_dir());
+        let canonical_dir = if is_dir {
+            Some(path.canonicalize().map_err(|e| {
+                format!("Failed to resolve directory target '{}': {}", path.display(), e)
+            })?)
+        } else {
+            None
+        };
+
+        if canonical_dir
+            .as_ref()
+            .is_some_and(|canonical| visited_dirs.iter().any(|visited| visited == canonical))
+        {
+            continue;
+        }
+
+        let children = if is_dir {
+            let mut next_visited = visited_dirs.to_vec();
+            if let Some(canonical_dir) = canonical_dir.clone() {
+                next_visited.push(canonical_dir);
+            }
+            build_skill_directory_nodes(root, &path, &next_visited)?
+        } else {
+            Vec::new()
+        };
+        let relative_path = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
+
+        nodes.push(SkillDirectoryNode {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            path: path.to_string_lossy().into_owned(),
+            relative_path,
+            is_dir,
+            children,
+        });
+    }
+
+    nodes.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a
+            .name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then_with(|| a.name.cmp(&b.name)),
+    });
+
+    Ok(nodes)
 }
 
 fn claude_conflict_group(agent_id: &str, skill_id: &str) -> String {
@@ -369,6 +448,23 @@ pub async fn read_skill_content(
 #[tauri::command]
 pub async fn read_file_by_path(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("Failed to read '{}': {}", path, e))
+}
+
+#[tauri::command]
+pub async fn list_skill_directory(dir_path: String) -> Result<Vec<SkillDirectoryNode>, String> {
+    let root = Path::new(&dir_path);
+    if !root.exists() {
+        return Err(format!("Path does not exist: {}", dir_path));
+    }
+    if !root.is_dir() {
+        return Err(format!("Path is not a directory: {}", dir_path));
+    }
+
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve directory '{}': {}", dir_path, e))?;
+
+    build_skill_directory_nodes(root, root, &[canonical_root])
 }
 
 #[tauri::command]
@@ -1164,6 +1260,62 @@ mod tests {
     async fn test_read_file_by_path_not_found() {
         let result = read_file_by_path("/nonexistent/file.md".to_string()).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_skill_directory_returns_nested_sorted_tree() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("frontend-design");
+        let docs_dir = root.join("docs");
+        let nested_dir = docs_dir.join("guides");
+
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(root.join("SKILL.md"), "# Skill").unwrap();
+        fs::write(root.join("notes.txt"), "notes").unwrap();
+        fs::write(docs_dir.join("README.md"), "# Docs").unwrap();
+        fs::write(nested_dir.join("tips.md"), "# Tips").unwrap();
+
+        let nodes = list_skill_directory(root.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0].name, "docs");
+        assert!(nodes[0].is_dir);
+        assert_eq!(nodes[0].relative_path, "docs");
+        assert_eq!(nodes[0].children.len(), 2);
+        assert_eq!(nodes[0].children[0].name, "guides");
+        assert!(nodes[0].children[0].is_dir);
+        assert_eq!(nodes[0].children[0].children[0].relative_path, "docs/guides/tips.md");
+        assert_eq!(nodes[1].name, "notes.txt");
+        assert!(!nodes[1].is_dir);
+        assert_eq!(nodes[2].name, "SKILL.md");
+        assert!(!nodes[2].is_dir);
+    }
+
+    #[tokio::test]
+    async fn test_list_skill_directory_rejects_missing_path() {
+        let result = list_skill_directory("/nonexistent/directory".to_string()).await;
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_list_skill_directory_skips_recursive_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("planning-with-files-zh");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("SKILL.md"), "# Skill").unwrap();
+        symlink(&root, root.join("planning-with-files-zh")).unwrap();
+
+        let nodes = list_skill_directory(root.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].name, "SKILL.md");
     }
 
     // ── open_in_file_manager ───────────────────────────────────────────────────

@@ -2,7 +2,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { SkillDetailView } from "../components/skill/SkillDetailView";
-import { AgentWithStatus, SkillDetail as SkillDetailType } from "../types";
+import {
+  AgentWithStatus,
+  SkillDetail as SkillDetailType,
+  SkillDirectoryNode as SkillDirectoryNodeType,
+} from "../types";
+
+const { mockTauriInvoke, mockIsTauriRuntime } = vi.hoisted(() => ({
+  mockTauriInvoke: vi.fn(),
+  mockIsTauriRuntime: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/tauri", () => ({
+  invoke: mockTauriInvoke,
+  isTauriRuntime: mockIsTauriRuntime,
+}));
 
 // ─── Mock stores ──────────────────────────────────────────────────────────────
 
@@ -170,6 +184,33 @@ const mockPluginContent =
 const mockUserContent =
   "---\nname: frontend-design\ndescription: User copy\n---\n\n# User Frontend Design\n\nUser content.";
 
+const mockNotesContent = "Project notes for frontend design.";
+
+const mockDirectoryTree: SkillDirectoryNodeType[] = [
+  {
+    name: "docs",
+    path: "~/.agents/skills/frontend-design/docs",
+    relative_path: "docs",
+    is_dir: true,
+    children: [
+      {
+        name: "notes.txt",
+        path: "~/.agents/skills/frontend-design/docs/notes.txt",
+        relative_path: "docs/notes.txt",
+        is_dir: false,
+        children: [],
+      },
+    ],
+  },
+  {
+    name: "SKILL.md",
+    path: "~/.agents/skills/frontend-design/SKILL.md",
+    relative_path: "SKILL.md",
+    is_dir: false,
+    children: [],
+  },
+];
+
 const mockLoadDetail = vi.fn();
 const mockInstallSkill = vi.fn();
 const mockUninstallSkill = vi.fn();
@@ -253,6 +294,29 @@ function renderView(
 describe("SkillDetailView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsTauriRuntime.mockImplementation(() => {
+      const w = window as unknown as {
+        __TAURI__?: unknown;
+        __TAURI_INTERNALS__?: unknown;
+      };
+      return Boolean(w.__TAURI__ || w.__TAURI_INTERNALS__);
+    });
+    mockTauriInvoke.mockImplementation(async (command, args) => {
+      if (command === "list_skill_directory") {
+        return mockDirectoryTree;
+      }
+      if (command === "read_file_by_path") {
+        if (args && typeof args === "object" && "path" in args) {
+          return args.path === "~/.agents/skills/frontend-design/docs/notes.txt"
+            ? mockNotesContent
+            : mockContent;
+        }
+      }
+      if (command === "open_in_file_manager") {
+        return null;
+      }
+      throw new Error(`Unhandled invoke command: ${String(command)}`);
+    });
   });
 
   // ── Shell-agnostic: no back button / breadcrumb is rendered here ─────────
@@ -295,6 +359,24 @@ describe("SkillDetailView", () => {
   it("shows metadata section", () => {
     renderView();
     expect(screen.getByRole("region", { name: /技能基本信息/i })).toBeInTheDocument();
+  });
+
+  it("shows file tree above metadata and keeps directories collapsed by default", async () => {
+    renderView();
+
+    const filesRegion = await screen.findByRole("region", { name: /技能文件/i });
+    const metadataRegion = screen.getByRole("region", { name: /技能基本信息/i });
+    const docsButton = within(filesRegion).getByRole("button", { name: "docs" });
+
+    expect(filesRegion.compareDocumentPosition(metadataRegion) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(filesRegion).getByText("docs")).toBeInTheDocument();
+    expect(within(filesRegion).getByRole("button", { name: "SKILL.md" })).toBeInTheDocument();
+    expect(docsButton).toHaveAttribute("aria-expanded", "false");
+    expect(within(filesRegion).queryByRole("button", { name: "notes.txt" })).toBeNull();
+
+    fireEvent.click(docsButton);
+    expect(docsButton).toHaveAttribute("aria-expanded", "true");
+    expect(within(filesRegion).getByRole("button", { name: "notes.txt" })).toBeInTheDocument();
   });
 
   it("shows file path", () => {
@@ -545,7 +627,7 @@ describe("SkillDetailView", () => {
     expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("---");
   });
 
-  it("keeps malformed frontmatter out of markdown body while preserving summary fields", () => {
+  it("falls back to raw frontmatter display when frontmatter is malformed", () => {
     applyStoreMocks({
       content:
         "---\nname: broken-skill\ndescription: Broken summary\nmetadata: [oops\n---\n\n# Broken Skill\n\nBody.",
@@ -554,11 +636,10 @@ describe("SkillDetailView", () => {
 
     const markdown = screen.getByRole("tabpanel", { name: /Markdown/i });
     expect(within(markdown).getByRole("heading", { name: /Frontmatter/i })).toBeInTheDocument();
-    expect(within(markdown).getByText("broken-skill")).toBeInTheDocument();
-    expect(within(markdown).getByText("Broken summary")).toBeInTheDocument();
+    expect(within(markdown).getByText(/这段 frontmatter 无法稳定解析/i)).toBeInTheDocument();
+    expect(within(markdown).getAllByText(/name: broken-skill/).length).toBeGreaterThan(0);
+    expect(within(markdown).getAllByText(/description: Broken summary/).length).toBeGreaterThan(0);
     expect(screen.getByTestId("react-markdown")).toHaveTextContent("# Broken Skill");
-    expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("name: broken-skill");
-    expect(screen.getByTestId("react-markdown")).not.toHaveTextContent("metadata: [oops");
   });
 
   it("switches to raw source tab when Raw Source is clicked", async () => {
@@ -579,6 +660,22 @@ describe("SkillDetailView", () => {
       expect(rawPane).toHaveTextContent("---");
       expect(rawPane).toHaveTextContent("name: frontend-design");
     });
+  });
+
+  it("switches preview when a non-markdown file is selected from the file tree", async () => {
+    renderView();
+
+    const filesRegion = await screen.findByRole("region", { name: /技能文件/i });
+    fireEvent.click(within(filesRegion).getByRole("button", { name: "docs" }));
+    fireEvent.click(within(filesRegion).getByRole("button", { name: "notes.txt" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /预览|Preview/i })).toBeInTheDocument();
+      expect(screen.getByText(mockNotesContent)).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("docs/notes.txt")).toBeInTheDocument();
+    expect(screen.queryByTestId("react-markdown")).not.toBeInTheDocument();
   });
 
   it("loads cached explanation when content is available", async () => {

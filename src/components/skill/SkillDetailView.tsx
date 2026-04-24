@@ -24,7 +24,13 @@ import { parseFrontmatter } from "@/lib/frontmatter";
 import { useSkillDetailStore } from "@/stores/skillDetailStore";
 import { usePlatformStore } from "@/stores/platformStore";
 import { CollectionPickerDialog } from "@/components/collection/CollectionPickerDialog";
-import { AgentWithStatus, ClaudeSourceKind, SkillDetailRequest, SkillInstallation } from "@/types";
+import {
+  AgentWithStatus,
+  ClaudeSourceKind,
+  SkillDetailRequest,
+  SkillDirectoryNode,
+  SkillInstallation,
+} from "@/types";
 import { cn } from "@/lib/utils";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 
@@ -126,9 +132,10 @@ type PreviewTab = "markdown" | "raw" | "explanation";
 interface TabToggleProps {
   activeTab: PreviewTab;
   onChange: (tab: PreviewTab) => void;
+  previewLabel: string;
 }
 
-function TabToggle({ activeTab, onChange }: TabToggleProps) {
+function TabToggle({ activeTab, onChange, previewLabel }: TabToggleProps) {
   const { t } = useTranslation();
   return (
     <div className="flex border border-border rounded-lg p-0.5 gap-0.5 bg-muted/40">
@@ -144,7 +151,7 @@ function TabToggle({ activeTab, onChange }: TabToggleProps) {
         )}
       >
         <FileText className="size-3.5" />
-        {t("detail.markdown")}
+        {previewLabel}
       </button>
       <button
         role="tab"
@@ -193,6 +200,98 @@ const detailTypographyClassName = cn(
   "[&_pre]:text-[12px] [&_pre]:leading-5",
   "[&_pre_code]:text-[12px] [&_pre_code]:leading-5"
 );
+
+interface SelectedSkillFile {
+  path: string;
+  relativePath: string;
+}
+
+function deriveDirPathFromFilePath(path: string): string {
+  const match = path.match(/^(.*)[/\\][^/\\]+$/);
+  return match?.[1] ?? path;
+}
+
+function findFileNodeByPath(nodes: SkillDirectoryNode[], path: string): SkillDirectoryNode | null {
+  for (const node of nodes) {
+    if (node.path === path) {
+      return node;
+    }
+    if (node.children.length > 0) {
+      const match = findFileNodeByPath(node.children, path);
+      if (match) {
+        return match;
+      }
+    }
+  }
+  return null;
+}
+
+function FileTreeNode({
+  node,
+  level,
+  selectedPath,
+  expandedDirectories,
+  onToggleDirectory,
+  onSelectFile,
+}: {
+  node: SkillDirectoryNode;
+  level: number;
+  selectedPath: string | null;
+  expandedDirectories: Set<string>;
+  onToggleDirectory: (path: string) => void;
+  onSelectFile: (file: SelectedSkillFile) => void;
+}) {
+  const paddingLeft = `${level * 12}px`;
+
+  if (node.is_dir) {
+    const isExpanded = expandedDirectories.has(node.path);
+    return (
+      <div className="space-y-1">
+        <button
+          type="button"
+          aria-expanded={isExpanded}
+          onClick={() => onToggleDirectory(node.path)}
+          className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground cursor-pointer"
+          style={{ paddingLeft }}
+        >
+          {isExpanded ? <ChevronDown className="size-3.5 shrink-0" /> : <ChevronRight className="size-3.5 shrink-0" />}
+          <FolderOpen className="size-3.5 shrink-0" />
+          <span className="truncate">{node.name}</span>
+        </button>
+        {isExpanded && node.children.map((child) => (
+          <FileTreeNode
+            key={child.path}
+            node={child}
+            level={level + 1}
+            selectedPath={selectedPath}
+            expandedDirectories={expandedDirectories}
+            onToggleDirectory={onToggleDirectory}
+            onSelectFile={onSelectFile}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  const isSelected = node.path === selectedPath;
+  return (
+    <button
+      type="button"
+      onClick={() => onSelectFile({ path: node.path, relativePath: node.relative_path })}
+      className={cn(
+        "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs transition-colors cursor-pointer",
+        isSelected
+          ? "bg-primary/10 text-primary"
+          : "text-foreground/80 hover:bg-muted/60 hover:text-foreground"
+      )}
+      style={{ paddingLeft }}
+      title={node.relative_path}
+    >
+      <FileText className="size-3.5 shrink-0" />
+      <span className="truncate">{node.name}</span>
+    </button>
+  );
+}
 
 // ─── SkillDetailView ──────────────────────────────────────────────────────────
 
@@ -285,6 +384,13 @@ export function SkillDetailView({
   const [fileIsLoading, setFileIsLoading] = useState(false);
   const [fileExplanation, setFileExplanation] = useState<string | null>(null);
   const [fileIsExplaining, setFileIsExplaining] = useState(false);
+  const [directoryTree, setDirectoryTree] = useState<SkillDirectoryNode[]>([]);
+  const [isDirectoryTreeLoading, setIsDirectoryTreeLoading] = useState(false);
+  const [directoryTreeError, setDirectoryTreeError] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<SelectedSkillFile | null>(null);
+  const [selectedFileContent, setSelectedFileContent] = useState<string | null>(null);
+  const [isSelectedFileLoading, setIsSelectedFileLoading] = useState(false);
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set());
   const detailRequest = useMemo<SkillDetailRequest | null>(
     () => (skillId ? { skillId, agentId, rowId } : null),
     [skillId, agentId, rowId]
@@ -297,7 +403,7 @@ export function SkillDetailView({
   }, [detail?.row_id, rowId, skillId]);
 
   // Unified accessors
-  const content = isFileMode ? fileContent : storeContent;
+  const skillContent = isFileMode ? fileContent : storeContent;
   const isLoading = isFileMode ? fileIsLoading : storeIsLoading;
   const explanation = isFileMode ? fileExplanation : storeExplanation;
   const isExplanationLoading = isFileMode ? fileIsExplaining : storeIsExplanationLoading;
@@ -307,12 +413,42 @@ export function SkillDetailView({
   const [isCollectionPickerOpen, setIsCollectionPickerOpen] = useState(false);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const addToCollectionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const selectedFilePath = selectedFile?.path ?? null;
+  const selectedRelativePath = selectedFile?.relativePath ?? null;
+  const currentDirectoryPath = useMemo(() => {
+    if (isFileMode) {
+      return discoverMetadata?.dirPath ?? (filePath ? deriveDirPathFromFilePath(filePath) : null);
+    }
+    return detail?.dir_path ?? null;
+  }, [detail?.dir_path, discoverMetadata?.dirPath, filePath, isFileMode]);
+  const skillFilePath = isFileMode ? filePath ?? null : detail?.file_path ?? null;
 
   useEffect(() => {
     if (detail?.is_read_only && isCollectionPickerOpen) {
       setIsCollectionPickerOpen(false);
     }
   }, [detail?.is_read_only, isCollectionPickerOpen]);
+
+  const fetchDirectoryTree = useCallback(async (dirPath: string) => {
+    if (!isTauriRuntime()) {
+      setDirectoryTree([]);
+      setDirectoryTreeError(null);
+      setIsDirectoryTreeLoading(false);
+      return;
+    }
+
+    setIsDirectoryTreeLoading(true);
+    setDirectoryTreeError(null);
+    try {
+      const tree = await invoke<SkillDirectoryNode[]>("list_skill_directory", { dirPath });
+      setDirectoryTree(tree);
+    } catch (err) {
+      setDirectoryTree([]);
+      setDirectoryTreeError(String(err));
+    } finally {
+      setIsDirectoryTreeLoading(false);
+    }
+  }, []);
 
   // ── File mode: load content from path ─────────────────────────────────
   const fetchFileContent = useCallback(async () => {
@@ -332,6 +468,9 @@ export function SkillDetailView({
     if (isFileMode) {
       setFileContent(null);
       setFileExplanation(null);
+      setSelectedFile(null);
+      setSelectedFileContent(null);
+      setExpandedDirectories(new Set());
       setActiveTab("markdown");
       void fetchFileContent();
     }
@@ -352,6 +491,71 @@ export function SkillDetailView({
       loadCachedExplanation(explanationRequestKey, i18n.language);
     }
   }, [explanationRequestKey, storeContent, i18n.language, loadCachedExplanation]);
+
+  useEffect(() => {
+    if (!currentDirectoryPath) {
+      setDirectoryTree([]);
+      setDirectoryTreeError(null);
+      return;
+    }
+
+    setSelectedFile(null);
+    setSelectedFileContent(null);
+    setExpandedDirectories(new Set());
+    void fetchDirectoryTree(currentDirectoryPath);
+  }, [currentDirectoryPath, fetchDirectoryTree]);
+
+  useEffect(() => {
+    if (!skillFilePath || directoryTree.length === 0) {
+      return;
+    }
+
+    if (selectedFilePath && findFileNodeByPath(directoryTree, selectedFilePath)) {
+      return;
+    }
+
+    const defaultNode = findFileNodeByPath(directoryTree, skillFilePath);
+    setSelectedFile({
+      path: skillFilePath,
+      relativePath: defaultNode?.relative_path ?? "SKILL.md",
+    });
+  }, [directoryTree, selectedFilePath, skillFilePath]);
+
+  useEffect(() => {
+    if (!selectedFilePath || !skillFilePath || selectedFilePath === skillFilePath) {
+      setSelectedFileContent(null);
+      setIsSelectedFileLoading(false);
+      return;
+    }
+    if (!isTauriRuntime()) {
+      setSelectedFileContent(null);
+      setIsSelectedFileLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSelectedFileLoading(true);
+    invoke<string>("read_file_by_path", { path: selectedFilePath })
+      .then((text) => {
+        if (!cancelled) {
+          setSelectedFileContent(text);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedFileContent(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsSelectedFileLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedFilePath, skillFilePath]);
 
   // ── Derived values ───────────────────────────────────────────────────────
 
@@ -404,28 +608,47 @@ export function SkillDetailView({
   }
 
   function handleGenerateExplanation() {
-    if (isFileMode && content) {
+    if (isFileMode && skillContent) {
       setFileIsExplaining(true);
       setFileExplanation(null);
-      invoke<string>("explain_skill", { content })
+      invoke<string>("explain_skill", { content: skillContent })
         .then(setFileExplanation)
         .catch((err) => setFileExplanation(`Error: ${String(err)}`))
         .finally(() => setFileIsExplaining(false));
       return;
     }
-    if (explanationRequestKey && content) {
-      generateExplanation(explanationRequestKey, content, i18n.language);
+    if (explanationRequestKey && skillContent) {
+      generateExplanation(explanationRequestKey, skillContent, i18n.language);
     }
   }
 
   function handleRefreshExplanation() {
-    if (isFileMode && content) {
+    if (isFileMode && skillContent) {
       handleGenerateExplanation();
       return;
     }
-    if (explanationRequestKey && content) {
-      refreshExplanation(explanationRequestKey, content, i18n.language);
+    if (explanationRequestKey && skillContent) {
+      refreshExplanation(explanationRequestKey, skillContent, i18n.language);
     }
+  }
+
+  function handleSelectFile(file: SelectedSkillFile) {
+    setSelectedFile(file);
+    if (activeTab === "explanation") {
+      setActiveTab(file.path.toLowerCase().endsWith(".md") ? "markdown" : "raw");
+    }
+  }
+
+  function handleToggleDirectory(path: string) {
+    setExpandedDirectories((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
   }
 
   const handleOpenDiscoverPath = useCallback(async () => {
@@ -437,9 +660,15 @@ export function SkillDetailView({
     }
   }, [discoverMetadata]);
 
-  const { frontmatterRaw, frontmatterData, body: markdownContent } = content
-    ? parseFrontmatter(content)
-    : { frontmatterRaw: "", frontmatterData: {}, body: "" };
+  const previewContent = selectedFilePath && skillFilePath && selectedFilePath !== skillFilePath
+    ? selectedFileContent
+    : skillContent;
+  const selectedPreviewPath = selectedFilePath ?? skillFilePath;
+  const isSelectedMarkdownFile = (selectedPreviewPath ?? "").toLowerCase().endsWith(".md");
+  const previewLabel = isSelectedMarkdownFile ? t("detail.markdown") : t("detail.preview");
+  const { frontmatterRaw, frontmatterData, body: markdownContent } = previewContent && isSelectedMarkdownFile
+    ? parseFrontmatter(previewContent)
+    : { frontmatterRaw: "", frontmatterData: {}, body: previewContent ?? "" };
   const isBrowserFallback = !isTauriRuntime() && !isLoading && !detail && !error && !isFileMode;
   const effectiveName = isFileMode
     ? (discoverMetadata?.name ?? "")
@@ -447,7 +676,7 @@ export function SkillDetailView({
   const effectiveDescription = isFileMode
     ? discoverMetadata?.description
     : detail?.description;
-  const hasData = isFileMode ? content !== null : !!detail;
+  const hasData = isFileMode ? skillContent !== null : !!detail;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -466,7 +695,7 @@ export function SkillDetailView({
             </p>
           )}
         </div>
-        <TabToggle activeTab={activeTab} onChange={setActiveTab} />
+        <TabToggle activeTab={activeTab} onChange={setActiveTab} previewLabel={previewLabel} />
       </div>
 
       {/* ── ContentArea ──────────────────────────────────────────────────── */}
@@ -524,15 +753,33 @@ export function SkillDetailView({
                 <div
                   className="p-6 space-y-4"
                   role="tabpanel"
-                  aria-label={t("detail.markdown")}
+                  aria-label={previewLabel}
                 >
-                  <SkillFrontmatterCard data={frontmatterData} raw={frontmatterRaw} />
-                  {content ? (
-                    <div className={cn("markdown-body", detailTypographyClassName)}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {markdownContent}
-                      </ReactMarkdown>
+                  {selectedRelativePath && (
+                    <div className="text-xs font-mono text-muted-foreground break-all">
+                      {selectedRelativePath}
                     </div>
+                  )}
+                  {isSelectedFileLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      {t("common.loading")}
+                    </div>
+                  ) : previewContent ? (
+                    isSelectedMarkdownFile ? (
+                      <>
+                        <SkillFrontmatterCard data={frontmatterData} raw={frontmatterRaw} />
+                        <div className={cn("markdown-body", detailTypographyClassName)}>
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {markdownContent}
+                          </ReactMarkdown>
+                        </div>
+                      </>
+                    ) : (
+                      <pre className="rounded-lg border border-border bg-card p-4 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80">
+                        {previewContent}
+                      </pre>
+                    )
                   ) : (
                     <p className="text-sm text-muted-foreground italic">
                       {t("detail.noContent")}
@@ -545,7 +792,8 @@ export function SkillDetailView({
                   role="tabpanel"
                   aria-label={t("detail.rawSource")}
                 >
-                  {content ?? t("detail.noContent")}
+                  {selectedRelativePath ? `${selectedRelativePath}\n\n` : ""}
+                  {isSelectedFileLoading ? t("common.loading") : (previewContent ?? t("detail.noContent"))}
                 </pre>
               ) : (
                 <div
@@ -567,7 +815,7 @@ export function SkillDetailView({
                       variant="outline"
                       size="sm"
                       onClick={explanation ? handleRefreshExplanation : handleGenerateExplanation}
-                      disabled={!content || isExplanationLoading || isExplanationStreaming}
+                      disabled={!skillContent || isExplanationLoading || isExplanationStreaming}
                       className="gap-1.5"
                     >
                       {isExplanationLoading || isExplanationStreaming ? (
@@ -639,7 +887,7 @@ export function SkillDetailView({
                       <Button
                         size="sm"
                         onClick={handleGenerateExplanation}
-                        disabled={!content || isExplanationLoading || isExplanationStreaming}
+                        disabled={!skillContent || isExplanationLoading || isExplanationStreaming}
                         className="gap-1.5"
                       >
                         <Bot className="size-3.5" />
@@ -658,6 +906,36 @@ export function SkillDetailView({
             >
               {isFileMode && discoverMetadata ? (
                 <>
+                  <section aria-label={t("detail.filesRegion")}>
+                    <SectionLabel>{t("detail.files")}</SectionLabel>
+                    {isDirectoryTreeLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        {t("common.loading")}
+                      </div>
+                    ) : directoryTreeError ? (
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {directoryTreeError}
+                      </p>
+                    ) : directoryTree.length > 0 ? (
+                      <div className="space-y-1">
+                        {directoryTree.map((node) => (
+                          <FileTreeNode
+                            key={node.path}
+                            node={node}
+                            level={0}
+                            selectedPath={selectedPreviewPath}
+                            expandedDirectories={expandedDirectories}
+                            onToggleDirectory={handleToggleDirectory}
+                            onSelectFile={handleSelectFile}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{t("detail.noFiles")}</p>
+                    )}
+                  </section>
+
                   {/* Discover metadata */}
                   <section aria-label={t("detail.metadataRegion")}>
                     <SectionLabel>{t("detail.metadata")}</SectionLabel>
@@ -697,6 +975,36 @@ export function SkillDetailView({
                 </>
               ) : detail ? (
                 <>
+                  <section aria-label={t("detail.filesRegion")}>
+                    <SectionLabel>{t("detail.files")}</SectionLabel>
+                    {isDirectoryTreeLoading ? (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        {t("common.loading")}
+                      </div>
+                    ) : directoryTreeError ? (
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        {directoryTreeError}
+                      </p>
+                    ) : directoryTree.length > 0 ? (
+                      <div className="space-y-1">
+                        {directoryTree.map((node) => (
+                          <FileTreeNode
+                            key={node.path}
+                            node={node}
+                            level={0}
+                            selectedPath={selectedPreviewPath}
+                            expandedDirectories={expandedDirectories}
+                            onToggleDirectory={handleToggleDirectory}
+                            onSelectFile={handleSelectFile}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{t("detail.noFiles")}</p>
+                    )}
+                  </section>
+
                   {(detail.source_kind || detail.is_read_only) && (
                     <section
                       aria-label={t("detail.sourceStatusRegion", {

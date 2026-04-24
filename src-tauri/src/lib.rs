@@ -57,6 +57,7 @@ pub fn run() {
             commands::skills::get_skill_detail,
             commands::skills::read_skill_content,
             commands::skills::read_file_by_path,
+            commands::skills::list_skill_directory,
             commands::skills::open_in_file_manager,
             // Collections
             commands::collections::create_collection,

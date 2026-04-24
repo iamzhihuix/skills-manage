@@ -89,6 +89,14 @@ export interface SkillDetail extends Omit<Skill, "content"> {
   collections?: Collection[];
 }
 
+export interface SkillDirectoryNode {
+  name: string;
+  path: string;
+  relative_path: string;
+  is_dir: boolean;
+  children: SkillDirectoryNode[];
+}
+
 export interface SkillDetailRequest {
   skillId: string;
   agentId?: string;
