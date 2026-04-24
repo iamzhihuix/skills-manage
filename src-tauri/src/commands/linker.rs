@@ -20,6 +20,9 @@ pub(crate) struct LinkCreationResult {
     pub symlink_target: Option<String>,
 }
 
+const LINK_TYPE_SYMLINK: &str = "symlink";
+const LINK_TYPE_COPY: &str = "copy";
+
 /// Result of a batch install across multiple agents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchInstallResult {
@@ -98,7 +101,14 @@ pub(crate) fn try_create_symlink(_target: &Path, _link: &Path) -> std::io::Resul
 }
 
 pub fn create_symlink(target: &Path, link: &Path) -> Result<(), String> {
-    try_create_symlink(target, link).map_err(|e| format!("Failed to create symlink: {}", e))
+    try_create_symlink(target, link).map_err(|e| {
+        format!(
+            "Failed to create symlink to '{}' at '{}': {}",
+            target.display(),
+            link.display(),
+            e
+        )
+    })
 }
 
 #[cfg(windows)]
@@ -119,17 +129,31 @@ pub(crate) fn create_symlink_or_copy(
 ) -> Result<LinkCreationResult, String> {
     match try_create_symlink(symlink_target_path, link_path) {
         Ok(()) => Ok(LinkCreationResult {
-            link_type: "symlink".to_string(),
+            link_type: LINK_TYPE_SYMLINK.to_string(),
             symlink_target: Some(recorded_symlink_target),
         }),
         Err(error) if should_fallback_to_copy_error(&error) => {
-            copy_dir_all(copy_source_path, link_path)?;
+            copy_dir_all_atomic(copy_source_path, link_path).map_err(|copy_error| {
+                format!(
+                    "Failed to create link at '{}' by copying from '{}' after failing to create symlink to '{}': symlink failed with: {}; copy failed with: {}",
+                    link_path.display(),
+                    copy_source_path.display(),
+                    symlink_target_path.display(),
+                    error,
+                    copy_error
+                )
+            })?;
             Ok(LinkCreationResult {
-                link_type: "copy".to_string(),
+                link_type: LINK_TYPE_COPY.to_string(),
                 symlink_target: None,
             })
         }
-        Err(error) => Err(format!("Failed to create symlink: {}", error)),
+        Err(error) => Err(format!(
+            "Failed to create symlink to '{}' at '{}': {}",
+            symlink_target_path.display(),
+            link_path.display(),
+            error
+        )),
     }
 }
 
@@ -187,6 +211,115 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn canonical_copy_paths(src: &Path, dst: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let source = src
+        .canonicalize()
+        .map_err(|e| format!("Failed to canonicalize source '{}': {}", src.display(), e))?;
+    let target_parent_path = dst
+        .parent()
+        .ok_or_else(|| format!("Invalid destination path: '{}'", dst.display()))?;
+    std::fs::create_dir_all(target_parent_path).map_err(|e| {
+        format!(
+            "Failed to create destination parent for '{}': {}",
+            dst.display(),
+            e
+        )
+    })?;
+    let target_parent = target_parent_path.canonicalize().map_err(|e| {
+        format!(
+            "Failed to canonicalize destination parent for '{}': {}",
+            dst.display(),
+            e
+        )
+    })?;
+    let target_name = dst
+        .file_name()
+        .ok_or_else(|| format!("Invalid destination path: '{}'", dst.display()))?;
+    let target = target_parent.join(target_name);
+
+    if source == target || target.starts_with(&source) || source.starts_with(&target) {
+        return Err(format!(
+            "Refusing to copy overlapping paths: source='{}', target='{}'",
+            source.display(),
+            target.display()
+        ));
+    }
+
+    Ok((source, target))
+}
+
+fn temp_copy_path(dst: &Path) -> Result<PathBuf, String> {
+    let parent = dst
+        .parent()
+        .ok_or_else(|| format!("Invalid destination path: '{}'", dst.display()))?;
+    let name = dst
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("skills-manage-copy");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+
+    Ok(parent.join(format!(
+        ".{}.tmp-{}-{}",
+        name,
+        std::process::id(),
+        timestamp
+    )))
+}
+
+fn remove_existing_path(path: &Path) -> Result<(), String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => std::fs::remove_file(path)
+            .map_err(|e| format!("Failed to remove existing file '{}': {}", path.display(), e)),
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path).map_err(|e| {
+            format!(
+                "Failed to remove existing directory '{}': {}",
+                path.display(),
+                e
+            )
+        }),
+        Ok(_) => Err(format!(
+            "Existing path '{}' is not a file, directory, or symlink",
+            path.display()
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!(
+            "Failed to inspect existing path '{}': {}",
+            path.display(),
+            e
+        )),
+    }
+}
+
+fn copy_dir_all_atomic(src: &Path, dst: &Path) -> Result<(), String> {
+    let (source, target) = canonical_copy_paths(src, dst)?;
+    let tmp = temp_copy_path(&target)?;
+
+    remove_existing_path(&tmp)?;
+
+    if let Err(error) = copy_dir_all(&source, &tmp) {
+        let _ = remove_existing_path(&tmp);
+        return Err(error);
+    }
+
+    if let Err(error) = remove_existing_path(&target) {
+        let _ = remove_existing_path(&tmp);
+        return Err(error);
+    }
+
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = remove_existing_path(&tmp);
+        format!(
+            "Failed to finalize copy '{}' -> '{}': {}",
+            tmp.display(),
+            target.display(),
+            e
+        )
+    })
 }
 
 // ─── Auto-centralize ─────────────────────────────────────────────────────────
@@ -253,6 +386,79 @@ async fn ensure_centralized(
 /// - The canonical skill does not exist (no SKILL.md).
 /// - A real (non-symlink) directory already exists at the target path.
 /// - `agent_id` is "central" (would create a self-referencing symlink).
+fn paths_match_install_record(recorded_path: &str, target_path: &Path) -> bool {
+    let recorded_path = PathBuf::from(recorded_path);
+
+    if recorded_path == target_path {
+        return true;
+    }
+
+    if let (Ok(recorded), Ok(target)) = (recorded_path.canonicalize(), target_path.canonicalize()) {
+        return recorded == target;
+    }
+
+    let recorded = recorded_path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    let target = target_path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+
+    #[cfg(windows)]
+    {
+        recorded.eq_ignore_ascii_case(&target)
+    }
+
+    #[cfg(not(windows))]
+    {
+        recorded == target
+    }
+}
+
+async fn is_managed_copy_install(
+    pool: &DbPool,
+    skill_id: &str,
+    agent_id: &str,
+    target_path: &Path,
+) -> Result<bool, String> {
+    let installations = db::get_skill_installations(pool, skill_id).await?;
+    Ok(installations.iter().any(|record| {
+        record.agent_id == agent_id
+            && record.link_type == LINK_TYPE_COPY
+            && paths_match_install_record(&record.installed_path, target_path)
+    }))
+}
+
+async fn replace_managed_copy_install(
+    pool: &DbPool,
+    skill_id: &str,
+    agent_id: &str,
+    source_dir: &Path,
+    target_path: &Path,
+) -> Result<Option<InstallResult>, String> {
+    if target_path.is_dir()
+        && is_managed_copy_install(pool, skill_id, agent_id, target_path).await?
+    {
+        copy_dir_all_atomic(source_dir, target_path)?;
+        return persist_installation(
+            pool,
+            skill_id,
+            agent_id,
+            target_path,
+            LINK_TYPE_COPY.to_string(),
+            None,
+        )
+        .await
+        .map(Some);
+    }
+
+    Ok(None)
+}
+
 pub async fn install_skill_to_agent_impl(
     pool: &DbPool,
     skill_id: &str,
@@ -305,7 +511,14 @@ pub async fn install_skill_to_agent_impl(
                 symlink_path.display()
             ));
         }
-        Err(_) => {} // Path does not exist — proceed normally.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "Failed to inspect install target '{}': {}",
+                symlink_path.display(),
+                e
+            ));
+        }
     }
 
     // 7. Compute the relative path from the agent directory to the canonical dir.
@@ -319,7 +532,7 @@ pub async fn install_skill_to_agent_impl(
         skill_id,
         agent_id,
         &symlink_path,
-        "symlink".to_string(),
+        LINK_TYPE_SYMLINK.to_string(),
         Some(canonical_dir.to_string_lossy().into_owned()),
     )
     .await
@@ -351,6 +564,12 @@ pub async fn install_skill_to_agent_auto_impl(
     std::fs::create_dir_all(&agent_dir)
         .map_err(|e| format!("Failed to create agent skills directory: {}", e))?;
 
+    if let Some(result) =
+        replace_managed_copy_install(pool, skill_id, agent_id, &canonical_dir, &target_path).await?
+    {
+        return Ok(result);
+    }
+
     match std::fs::symlink_metadata(&target_path) {
         Ok(meta) if meta.file_type().is_symlink() => {
             std::fs::remove_file(&target_path)
@@ -368,7 +587,14 @@ pub async fn install_skill_to_agent_auto_impl(
                 target_path.display()
             ));
         }
-        Err(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "Failed to inspect install target '{}': {}",
+                target_path.display(),
+                e
+            ));
+        }
     }
 
     let relative_target = symlink_target_path(&agent_dir, &canonical_dir);
@@ -428,6 +654,12 @@ pub async fn install_skill_to_agent_copy_impl(
     std::fs::create_dir_all(&agent_dir)
         .map_err(|e| format!("Failed to create agent skills directory: {}", e))?;
 
+    if let Some(result) =
+        replace_managed_copy_install(pool, skill_id, agent_id, &canonical_dir, &target_path).await?
+    {
+        return Ok(result);
+    }
+
     // 6. Handle any existing entry at the target path.
     match std::fs::symlink_metadata(&target_path) {
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -447,18 +679,25 @@ pub async fn install_skill_to_agent_copy_impl(
                 target_path.display()
             ));
         }
-        Err(_) => {} // Path does not exist — proceed normally.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            return Err(format!(
+                "Failed to inspect install target '{}': {}",
+                target_path.display(),
+                e
+            ));
+        }
     }
 
     // 7. Recursively copy the canonical skill directory.
-    copy_dir_all(&canonical_dir, &target_path)?;
+    copy_dir_all_atomic(&canonical_dir, &target_path)?;
 
     persist_installation(
         pool,
         skill_id,
         agent_id,
         &target_path,
-        "copy".to_string(),
+        LINK_TYPE_COPY.to_string(),
         None,
     )
     .await
@@ -560,9 +799,10 @@ pub async fn install_skill_to_agent(
     method: Option<String>,
 ) -> Result<InstallResult, String> {
     match method.as_deref().unwrap_or("auto") {
+        "auto" => install_skill_to_agent_auto_impl(&state.db, &skill_id, &agent_id).await,
         "copy" => install_skill_to_agent_copy_impl(&state.db, &skill_id, &agent_id).await,
         "symlink" => install_skill_to_agent_impl(&state.db, &skill_id, &agent_id).await,
-        _ => install_skill_to_agent_auto_impl(&state.db, &skill_id, &agent_id).await,
+        other => Err(format!("Unknown install method: {}", other)),
     }
 }
 
@@ -595,9 +835,10 @@ pub async fn batch_install_to_agents(
 
     for agent_id in &agent_ids {
         let install_result = match method {
+            "auto" => install_skill_to_agent_auto_impl(&state.db, &skill_id, agent_id).await,
             "copy" => install_skill_to_agent_copy_impl(&state.db, &skill_id, agent_id).await,
             "symlink" => install_skill_to_agent_impl(&state.db, &skill_id, agent_id).await,
-            _ => install_skill_to_agent_auto_impl(&state.db, &skill_id, agent_id).await,
+            other => Err(format!("Unknown install method: {}", other)),
         };
         match install_result {
             Ok(_) => succeeded.push(agent_id.clone()),
@@ -1216,6 +1457,65 @@ mod tests {
         assert_eq!(
             installations[0].link_type, "copy",
             "DB should record link_type as 'copy'"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_copy_install_replaces_existing_managed_copy() {
+        let tmp = TempDir::new().unwrap();
+        let central_dir = tmp.path().join("central");
+        let agent_dir = tmp.path().join("claude");
+        fs::create_dir_all(&central_dir).unwrap();
+
+        let pool = setup_db(&central_dir, &agent_dir).await;
+        let skill_dir = create_central_skill(&central_dir, "replace-copy-skill");
+
+        install_skill_to_agent_copy_impl(&pool, "replace-copy-skill", "claude-code")
+            .await
+            .unwrap();
+
+        let installed_dir = agent_dir.join("replace-copy-skill");
+        fs::write(installed_dir.join("stale.txt"), "stale").unwrap();
+        fs::write(skill_dir.join("fresh.txt"), "fresh").unwrap();
+
+        let installation = SkillInstallation {
+            skill_id: "replace-copy-skill".to_string(),
+            agent_id: "claude-code".to_string(),
+            installed_path: installed_dir.join(".").to_string_lossy().into_owned(),
+            link_type: LINK_TYPE_COPY.to_string(),
+            symlink_target: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        db::upsert_skill_installation(&pool, &installation)
+            .await
+            .unwrap();
+
+        install_skill_to_agent_copy_impl(&pool, "replace-copy-skill", "claude-code")
+            .await
+            .unwrap();
+
+        assert!(
+            !installed_dir.join("stale.txt").exists(),
+            "managed copy reinstall should replace stale contents"
+        );
+        assert_eq!(
+            fs::read_to_string(installed_dir.join("fresh.txt")).unwrap(),
+            "fresh"
+        );
+    }
+
+    #[test]
+    fn test_copy_dir_all_atomic_rejects_overlapping_paths() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "---\nname: source\n---\n").unwrap();
+
+        let result = copy_dir_all_atomic(&source, &source.join("nested-copy"));
+
+        assert!(
+            result.is_err(),
+            "copying a directory into itself should be rejected"
         );
     }
 

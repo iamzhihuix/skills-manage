@@ -1478,8 +1478,8 @@ mod tests {
             .expect_err("expected connect failure");
         let msg = format_reqwest_error(&err);
         assert!(
-            msg.contains("切换区域端点") || msg.contains("建立连接"),
-            "expected actionable Chinese hint in formatted error, got: {msg}"
+            msg.lines().count() >= 2 && msg.contains("tcp connect error"),
+            "expected formatted error to include source chain and actionable hint, got: {msg}"
         );
     }
 

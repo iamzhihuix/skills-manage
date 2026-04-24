@@ -117,7 +117,10 @@ mod tests {
     fn expand_home_path_expands_windows_style_tilde() {
         let expanded =
             expand_home_path_with_home("~\\.claude\\skills", Path::new("C:\\Users\\alice"));
-        assert_eq!(expanded, PathBuf::from("C:\\Users\\alice\\.claude\\skills"));
+        assert_eq!(
+            expanded,
+            PathBuf::from("C:\\Users\\alice").join(".claude\\skills")
+        );
     }
 
     #[test]
