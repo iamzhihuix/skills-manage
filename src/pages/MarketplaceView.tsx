@@ -32,9 +32,9 @@ import { MarketplaceSkillDetailDrawer, type MarketplaceSkillDetail } from "@/com
 import { GitHubRepoImportWizard } from "@/components/marketplace/GitHubRepoImportWizard";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import type { GitHubRepoPreview } from "@/types";
+import type { GitHubRepoPreview, SkillsShFileEntry, SkillsShSkill } from "@/types";
 
-type TabId = "recommended" | "official";
+type TabId = "recommended" | "official" | "skillssh";
 
 type PreviewStatus =
   | { kind: "idle" }
@@ -91,6 +91,10 @@ export function MarketplaceView() {
   const previewGitHubRepoImport = useMarketplaceStore((s) => s.previewGitHubRepoImport);
   const importGitHubRepoSkills = useMarketplaceStore((s) => s.importGitHubRepoSkills);
   const resetGitHubImport = useMarketplaceStore((s) => s.resetGitHubImport);
+  const skillsShResults = useMarketplaceStore((s) => s.skillsShResults);
+  const isSkillsShLoading = useMarketplaceStore((s) => s.isSkillsShLoading);
+  const searchSkillsSh = useMarketplaceStore((s) => s.searchSkillsSh);
+  const installFromSkillsSh = useMarketplaceStore((s) => s.installFromSkillsSh);
 
   const rescan = usePlatformStore((s) => s.rescan);
   const platformAgents = usePlatformStore((s) => s.agents);
@@ -107,6 +111,7 @@ export function MarketplaceView() {
   const [recommendedSearch, setRecommendedSearch] = useState("");
   const [selectedPublisher, setSelectedPublisher] = useState<OfficialPublisher | null>(null);
   const [publisherSearch, setPublisherSearch] = useState("");
+  const [skillsShSearch, setSkillsShSearch] = useState("");
 
   // Preview state — inline skills preview in Official Directory
   const [previewRepo, setPreviewRepo] = useState<string | null>(null); // repo fullName
@@ -118,6 +123,7 @@ export function MarketplaceView() {
   const [previewStatus, setPreviewStatus] = useState<PreviewStatus>({ kind: "idle" });
   const [isGitHubImportOpen, setIsGitHubImportOpen] = useState(false);
   const [githubRepoUrl, setGitHubRepoUrl] = useState("");
+  const [resolvingSkillsShUrls, setResolvingSkillsShUrls] = useState<Set<string>>(new Set());
   const detailTriggerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -156,6 +162,16 @@ export function MarketplaceView() {
       setDetailSkill((current) =>
         current && current.id === skillId ? { ...current, installed: true } : current
       );
+      toast.success(t("marketplace.installSuccess"));
+    } catch (err) {
+      toast.error(String(err));
+    }
+  }
+
+  async function handleInstallSkillsSh(source: string, skillId: string) {
+    try {
+      await installFromSkillsSh(source, skillId);
+      await rescan();
       toast.success(t("marketplace.installSuccess"));
     } catch (err) {
       toast.error(String(err));
@@ -342,6 +358,7 @@ export function MarketplaceView() {
   const tabs: { id: TabId; label: string }[] = [
     { id: "recommended", label: lang === "zh" ? "推荐" : "Recommended" },
     { id: "official", label: lang === "zh" ? "官方源目录" : "Official Directory" },
+    { id: "skillssh", label: "skills.sh" },
   ];
 
   return (
@@ -618,7 +635,7 @@ export function MarketplaceView() {
                                     className="h-6 text-[10px] px-2"
                                   >
                                     <FileText className="size-3" />
-                                    <span>Detail</span>
+                                    <span>{t("common.detail")}</span>
                                   </Button>
                                   <Button
                                     variant="outline"
@@ -639,6 +656,144 @@ export function MarketplaceView() {
                         )}
                       </div>
                     )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: skills.sh ────────────────────────────────────────────── */}
+        {activeTab === "skillssh" && (
+          <div className="p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  placeholder={lang === "zh" ? "搜索 skills.sh..." : "Search skills.sh..."}
+                  value={skillsShSearch}
+                  onChange={(e) => setSkillsShSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && skillsShSearch.trim()) {
+                      void searchSkillsSh(skillsShSearch.trim());
+                    }
+                  }}
+                  className="pl-8 h-8 text-sm bg-muted/40"
+                />
+              </div>
+              <Button
+                size="sm"
+                onClick={() => {
+                  if (skillsShSearch.trim()) {
+                    void searchSkillsSh(skillsShSearch.trim());
+                  }
+                }}
+                disabled={isSkillsShLoading || !skillsShSearch.trim()}
+              >
+                {isSkillsShLoading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Search className="size-4" />
+                )}
+                <span>{lang === "zh" ? "搜索" : "Search"}</span>
+              </Button>
+            </div>
+
+            {skillsShResults.length === 0 && !isSkillsShLoading && (
+              <div className="text-center py-12 text-sm text-muted-foreground">
+                {lang === "zh" ? "输入关键词搜索 skills.sh" : "Enter keywords to search skills.sh"}
+              </div>
+            )}
+
+            {isSkillsShLoading && skillsShResults.length === 0 && (
+              <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground text-sm">
+                <Loader2 className="size-4 animate-spin" />
+                {lang === "zh" ? "搜索中..." : "Searching..."}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {skillsShResults.map((skill: SkillsShSkill) => {
+                const isInstalling = installingIds.has(skill.skill_id);
+                const starCount = skill.stars ?? skill.installs;
+                const starText =
+                  starCount >= 1_000_000
+                    ? `${(starCount / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`
+                    : starCount >= 1_000
+                      ? `${(starCount / 1_000).toFixed(1).replace(/\.0$/, "")}K`
+                      : `${starCount}`;
+                return (
+                  <div
+                    key={skill.id}
+                    className="flex items-center gap-3 p-3 rounded-md border border-border hover:border-primary/40 transition-colors"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{skill.name}</div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        ★ {starText} · {skill.source}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={resolvingSkillsShUrls.has(skill.skill_id)}
+                        onClick={async () => {
+                          setResolvingSkillsShUrls((prev) => new Set(prev).add(skill.skill_id));
+                          try {
+                            const [downloadUrl, files] = await Promise.all([
+                              invoke<string>("resolve_skills_sh_url", {
+                                source: skill.source,
+                                skillId: skill.skill_id,
+                              }),
+                              invoke<SkillsShFileEntry[]>("browse_skills_sh_directory", {
+                                source: skill.source,
+                                skillId: skill.skill_id,
+                              }).catch(() => undefined),
+                            ]);
+                            openDetailSkill({
+                              id: `skillssh:${skill.source}:${skill.skill_id}`,
+                              name: skill.name,
+                              downloadUrl,
+                              publisher: skill.source,
+                              sourceLabel: "skills.sh",
+                              sourceUrl: `https://github.com/${skill.source}`,
+                              installed: false,
+                              files,
+                            });
+                          } catch (err) {
+                            toast.error(String(err));
+                          } finally {
+                            setResolvingSkillsShUrls((prev) => {
+                              const next = new Set(prev);
+                              next.delete(skill.skill_id);
+                              return next;
+                            });
+                          }
+                        }}
+                        className="h-7 text-xs px-2"
+                      >
+                        {resolvingSkillsShUrls.has(skill.skill_id) ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          <FileText className="size-3" />
+                        )}
+                        <span>{t("common.detail")}</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void handleInstallSkillsSh(skill.source, skill.skill_id)}
+                        disabled={isInstalling}
+                      >
+                        {isInstalling ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Download className="size-4" />
+                        )}
+                        <span>{t("marketplace.install")}</span>
+                      </Button>
+                    </div>
                   </div>
                 );
               })}

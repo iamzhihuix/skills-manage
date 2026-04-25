@@ -5,6 +5,7 @@ import { setupExplanationStreamListeners } from "@/lib/explanationStream";
 import {
   SkillRegistry,
   MarketplaceSkill,
+  SkillsShSkill,
   GitHubRepoPreview,
   GitHubRepoImportResult,
   GitHubSkillImportSelection,
@@ -47,6 +48,10 @@ interface MarketplaceState {
   installingIds: Set<string>;
   error: string | null;
   githubImport: GitHubImportState;
+  // skills.sh search
+  skillsShResults: SkillsShSkill[];
+  skillsShQuery: string;
+  isSkillsShLoading: boolean;
 
   loadRegistries: () => Promise<void>;
   selectRegistry: (id: string) => void;
@@ -73,6 +78,9 @@ interface MarketplaceState {
     refresh?: boolean
   ) => Promise<void>;
   resetGitHubImport: () => void;
+  // skills.sh search
+  searchSkillsSh: (query: string) => Promise<void>;
+  installFromSkillsSh: (source: string, skillId: string) => Promise<void>;
 }
 
 const initialGitHubImportState = (): GitHubImportState => ({
@@ -139,6 +147,9 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
   installingIds: new Set(),
   error: null,
   githubImport: initialGitHubImportState(),
+  skillsShResults: [],
+  skillsShQuery: "",
+  isSkillsShLoading: false,
 
   getNormalizedRegistryIdentity: (url: string) => {
     const trimmed = url.trim();
@@ -626,6 +637,38 @@ export const useMarketplaceStore = create<MarketplaceState>((set, get) => ({
           },
         },
       }));
+    }
+  },
+
+  searchSkillsSh: async (query: string) => {
+    set({ skillsShQuery: query, isSkillsShLoading: true, error: null });
+    try {
+      const results = await invoke<SkillsShSkill[]>("search_skills_sh", {
+        query,
+        limit: 20,
+      });
+      set({ skillsShResults: results ?? [], isSkillsShLoading: false });
+    } catch (err) {
+      set({ error: String(err), isSkillsShLoading: false });
+    }
+  },
+
+  installFromSkillsSh: async (source: string, skillId: string) => {
+    set((s) => ({ installingIds: new Set(s.installingIds).add(skillId) }));
+    try {
+      await invoke("install_from_skills_sh", { source, skillId });
+      set((s) => {
+        const next = new Set(s.installingIds);
+        next.delete(skillId);
+        return { installingIds: next };
+      });
+    } catch (err) {
+      set((s) => {
+        const next = new Set(s.installingIds);
+        next.delete(skillId);
+        return { installingIds: next, error: String(err) };
+      });
+      throw err;
     }
   },
 

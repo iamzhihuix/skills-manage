@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Sparkles,
   Store,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -20,6 +21,9 @@ import { setupExplanationStreamListeners } from "@/lib/explanationStream";
 import { invoke, isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import i18n from "@/i18n";
+import { FileTreeNode } from "@/components/skill/FileTreeNode";
+import { buildSkillDirectoryTree } from "@/lib/fileTree";
+import type { SkillsShFileEntry } from "@/types";
 
 export interface MarketplaceSkillDetail {
   id: string;
@@ -30,6 +34,7 @@ export interface MarketplaceSkillDetail {
   sourceLabel?: string;
   sourceUrl?: string | null;
   installed?: boolean;
+  files?: SkillsShFileEntry[];
 }
 
 interface MarketplaceSkillDetailDrawerProps {
@@ -58,9 +63,28 @@ export function MarketplaceSkillDetailDrawer({
   const [explanation, setExplanation] = useState<string | null>(null);
   const [isExplaining, setIsExplaining] = useState(false);
   const [explanationError, setExplanationError] = useState<string | null>(null);
+  const [showExplanation, setShowExplanation] = useState(false);
   const explanationRequestRef = useRef(0);
   const explanationUnlistenRef = useRef<(() => void) | null>(null);
+  const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(new Set());
   const browserMode = !isTauriRuntime();
+
+  const directoryTree = useMemo(() => {
+    if (!skill?.files) return [];
+    return buildSkillDirectoryTree(skill.files);
+  }, [skill?.files]);
+
+  function handleToggleDirectory(path: string) {
+    setExpandedDirectories((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+  }
 
   const cleanupExplanation = useCallback(() => {
     explanationUnlistenRef.current?.();
@@ -91,6 +115,7 @@ export function MarketplaceSkillDetailDrawer({
       setContent("");
       setExplanation(null);
       setExplanationError(null);
+      setShowExplanation(false);
       setViewMode("markdown");
       void fetchContent();
     }
@@ -116,6 +141,7 @@ export function MarketplaceSkillDetailDrawer({
     const requestId = explanationRequestRef.current;
     const skillId = `marketplace-preview:${skill.id}`;
     cleanupExplanation();
+    setShowExplanation(true);
     setIsExplaining(true);
     setExplanation(null);
     setExplanationError(null);
@@ -256,7 +282,13 @@ export function MarketplaceSkillDetailDrawer({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleExplain}
+                    onClick={() => {
+                      if (explanation && !showExplanation) {
+                        setShowExplanation(true);
+                      } else {
+                        void handleExplain();
+                      }
+                    }}
                     disabled={isExplaining || !content || isLoadingContent || browserMode}
                     className="h-8 text-xs"
                   >
@@ -273,6 +305,40 @@ export function MarketplaceSkillDetailDrawer({
                     )}
                   </div>
                 )}
+
+                {showExplanation && (explanation || isExplaining || explanationError) ? (
+                  <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+                    <div className="flex items-center justify-between gap-1.5 mb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-primary">
+                        <Bot className="size-3.5" />
+                        {t("detail.aiExplanation")}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowExplanation(false)}
+                        className="text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                    {isExplaining ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="size-3.5 animate-spin" />
+                        {t("detail.explanationStreaming")}
+                      </div>
+                    ) : explanationError ? (
+                      <div className="text-sm text-destructive whitespace-pre-wrap leading-relaxed">
+                        {explanationError}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-foreground leading-relaxed markdown-body">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {explanation ?? ""}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
 
                 {isLoadingContent ? (
                   <div className="flex items-center justify-center py-12 gap-2 text-muted-foreground text-sm">
@@ -296,35 +362,30 @@ export function MarketplaceSkillDetailDrawer({
                     {content}
                   </pre>
                 )}
-
-                {(explanation || isExplaining || explanationError) && (
-                  <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
-                    <div className="flex items-center gap-1.5 text-xs font-medium text-primary mb-2">
-                      <Bot className="size-3.5" />
-                      {t("detail.aiExplanation")}
-                    </div>
-                    {isExplaining ? (
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="size-3.5 animate-spin" />
-                        {t("detail.explanationStreaming")}
-                      </div>
-                    ) : explanationError ? (
-                      <div className="text-sm text-destructive whitespace-pre-wrap leading-relaxed">
-                        {explanationError}
-                      </div>
-                    ) : (
-                      <div className="text-sm text-foreground whitespace-pre-wrap leading-relaxed">
-                        {explanation}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
 
               <aside
                 data-testid="skill-detail-right-sidebar"
                 className="w-full shrink-0 border-t border-border overflow-y-auto p-4 space-y-5 md:w-64 md:border-t-0 md:border-l"
               >
+                {skill.files ? (
+                  <section>
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80 mb-2">
+                      Files ({skill.files.length})
+                    </div>
+                    <div className="space-y-1">
+                      {directoryTree.map((node) => (
+                        <FileTreeNode
+                          key={node.path}
+                          node={node}
+                          level={0}
+                          expandedDirectories={expandedDirectories}
+                          onToggleDirectory={handleToggleDirectory}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
                 <section>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80 mb-2">
                     {t("detail.metadata")}
