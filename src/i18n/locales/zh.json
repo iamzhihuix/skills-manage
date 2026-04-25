@@ -19,7 +19,8 @@
     "retry": "重试",
     "loading": "加载中...",
     "search": "搜索",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "detail": "详情"
   },
   "sidebar": {
     "byTool": "按工具",

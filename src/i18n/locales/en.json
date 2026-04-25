@@ -19,7 +19,8 @@
     "retry": "Retry",
     "loading": "Loading...",
     "search": "Search",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "detail": "Detail"
   },
   "sidebar": {
     "byTool": "By Tool",

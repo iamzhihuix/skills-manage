@@ -13,6 +13,35 @@ use crate::{
     AppState,
 };
 
+pub(crate) fn github_request(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let req = client.get(url);
+    match token {
+        Some(t) => req.bearer_auth(t),
+        None => req,
+    }
+}
+
+/// Send a GET request; if the token is invalid (401), retry without it.
+/// 403 (rate limit, permissions) still propagates so the caller can act.
+pub(crate) async fn send_with_auth_fallback(
+    client: &reqwest::Client,
+    url: &str,
+    token: Option<&str>,
+) -> Result<reqwest::Response, reqwest::Error> {
+    if let Some(t) = token {
+        let resp = github_request(client, url, Some(t)).send().await?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return github_request(client, url, None).send().await;
+        }
+        return Ok(resp);
+    }
+    github_request(client, url, None).send().await
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GitHubRepoRef {
@@ -108,9 +137,9 @@ pub struct GitHubImportProgressPayload {
 }
 
 #[derive(Debug, Deserialize)]
-struct SkillFrontmatter {
-    name: String,
-    description: Option<String>,
+pub(crate) struct SkillFrontmatter {
+    pub(crate) name: String,
+    pub(crate) description: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1377,7 +1406,7 @@ fn parse_rate_limit_reset_epoch(raw: &str) -> Option<String> {
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
 }
 
-fn parse_frontmatter(content: &str) -> Option<SkillFrontmatter> {
+pub(crate) fn parse_frontmatter(content: &str) -> Option<SkillFrontmatter> {
     let trimmed = content.trim();
     if !trimmed.starts_with("---") {
         return None;
