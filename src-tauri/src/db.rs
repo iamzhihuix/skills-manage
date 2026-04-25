@@ -929,7 +929,10 @@ pub async fn upsert_skill(pool: &DbPool, skill: &Skill) -> Result<(), String> {
          ON CONFLICT(id) DO UPDATE SET
            name           = excluded.name,
            description    = excluded.description,
-           file_path      = excluded.file_path,
+           file_path      = CASE WHEN skills.is_central AND NOT excluded.is_central
+                               THEN skills.file_path
+                               ELSE excluded.file_path
+                          END,
            canonical_path = COALESCE(excluded.canonical_path, skills.canonical_path),
            is_central     = MAX(skills.is_central, excluded.is_central),
            source         = excluded.source,
@@ -1393,6 +1396,19 @@ pub async fn update_agent_detected(
     sqlx::query("UPDATE agents SET is_detected = ? WHERE id = ?")
         .bind(is_detected)
         .bind(agent_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a built-in scan directory entry by path.
+/// Unlike `remove_scan_directory`, this bypasses the built-in guard and is used
+/// exclusively when the central skills directory path changes, so the stale
+/// built-in scan directory is removed and re-created for the new path.
+pub async fn delete_builtin_scan_directory(pool: &DbPool, path: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM scan_directories WHERE path = ? AND is_builtin = 1")
+        .bind(path)
         .execute(pool)
         .await
         .map(|_| ())

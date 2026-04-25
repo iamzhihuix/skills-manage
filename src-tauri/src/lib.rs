@@ -78,6 +78,7 @@ pub fn run() {
             commands::settings::set_setting,
             commands::settings::get_central_skills_dir,
             commands::settings::set_central_skills_dir,
+            commands::settings::get_default_central_skills_dir,
             // Discover
             commands::discover::discover_scan_roots,
             commands::discover::get_scan_roots,

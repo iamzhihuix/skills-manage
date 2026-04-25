@@ -165,13 +165,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   loadCentralSkillsDir: async () => {
     set({ isLoadingCentralDir: true, error: null });
     try {
-      const path = await invoke<string>("get_central_skills_dir");
-      // Save the default value on first load
-      set((state) => ({
+      const [path, defaultPath] = await Promise.all([
+        invoke<string>("get_central_skills_dir"),
+        invoke<string>("get_default_central_skills_dir"),
+      ]);
+      set({
         centralSkillsDir: path,
-        defaultCentralSkillsDir: state.defaultCentralSkillsDir || path,
+        defaultCentralSkillsDir: defaultPath,
         isLoadingCentralDir: false,
-      }));
+      });
     } catch (err) {
       set({ error: String(err), isLoadingCentralDir: false });
     }
@@ -191,9 +193,6 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   resetCentralSkillsDir: async () => {
     set({ isSavingCentralDir: true, error: null });
     try {
-      // Find the current state to get default - or just set empty which triggers fallback
-      // We need to save the default value that was captured on first load
-      // Setting empty string would fail validation, so we need a different approach
       const { defaultCentralSkillsDir } = useSettingsStore.getState();
       if (defaultCentralSkillsDir) {
         await invoke<string>("set_central_skills_dir", { path: defaultCentralSkillsDir });

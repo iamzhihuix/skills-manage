@@ -121,14 +121,28 @@ pub async fn get_central_skills_dir_impl(pool: &DbPool) -> Result<String, String
     }
 }
 
+/// Return the hardcoded default central skills directory path (~/.agents/skills).
+pub fn get_default_central_skills_dir_impl() -> String {
+    path_to_string(&central_skills_dir())
+}
+
 /// Set the central skills directory path.
 /// Validates the path, saves to settings, and updates the central agent.
+/// Also cleans up the stale built-in scan directory entry for the old path.
 pub async fn set_central_skills_dir_impl(pool: &DbPool, path: &str) -> Result<String, String> {
     let path = path.trim();
     if path.is_empty() {
         return Err("Central skills directory path cannot be empty".to_string());
     }
     let expanded = path_to_string(&expand_home_path(path));
+
+    // Read the old central dir setting and remove its scan directory entry.
+    if let Ok(Some(old_path)) = db::get_setting(pool, "central_skills_dir").await {
+        if !old_path.trim().is_empty() && old_path != expanded {
+            let _ = db::delete_builtin_scan_directory(pool, &old_path).await;
+        }
+    }
+
     db::set_setting(pool, "central_skills_dir", &expanded).await?;
     db::update_agent_global_skills_dir(pool, "central", &expanded).await?;
     Ok(expanded)
@@ -149,6 +163,12 @@ pub async fn set_central_skills_dir(
     path: String,
 ) -> Result<String, String> {
     set_central_skills_dir_impl(&state.db, &path).await
+}
+
+/// Tauri command: return the hardcoded default central skills directory path.
+#[tauri::command]
+pub fn get_default_central_skills_dir() -> String {
+    get_default_central_skills_dir_impl()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

@@ -471,6 +471,8 @@ export function SettingsView() {
     try {
       await saveCentralSkillsDir(centralDirInput);
       setCentralDirMessage({ type: "success", text: t("settings.centralDirSaved") });
+      // Trigger rescan so skills are re-discovered from the new central path
+      await rescan();
     } catch (err) {
       setCentralDirMessage({ type: "error", text: String(err) });
     }
@@ -481,6 +483,8 @@ export function SettingsView() {
     try {
       await resetCentralSkillsDir();
       setCentralDirMessage({ type: "success", text: t("settings.centralDirResetDone") });
+      // Trigger rescan so skills are re-discovered from the default central path
+      await rescan();
     } catch (err) {
       setCentralDirMessage({ type: "error", text: String(err) });
     }
