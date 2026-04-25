@@ -38,7 +38,9 @@
     "discovered": "项目技能库",
     "rescan": "重新扫描...",
     "categoryLobster": "龙虾类",
-    "categoryCoding": "编程类"
+    "categoryCoding": "编程类",
+    "showAllPlatforms": "显示所有平台",
+    "hideEmptyPlatforms": "隐藏空平台"
   },
   "platform": {
     "searchPlaceholder": "搜索技能...",

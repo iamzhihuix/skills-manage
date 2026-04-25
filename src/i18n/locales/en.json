@@ -38,7 +38,9 @@
     "discovered": "Discovered",
     "rescan": "Re-scan...",
     "categoryLobster": "Lobster",
-    "categoryCoding": "Coding"
+    "categoryCoding": "Coding",
+    "showAllPlatforms": "Show all platforms",
+    "hideEmptyPlatforms": "Hide empty platforms"
   },
   "platform": {
     "searchPlaceholder": "Search skills...",

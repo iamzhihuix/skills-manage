@@ -6,6 +6,8 @@ import {
   Layers,
   Radar,
   Store,
+  Eye,
+  EyeOff,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -76,6 +78,7 @@ function NavItem({
 // ─── Sidebar ────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
+  const SHOW_ALL_PLATFORMS_KEY = "skills-manage:show-all-platforms";
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { t } = useTranslation();
@@ -88,14 +91,36 @@ export function Sidebar() {
   const loadDiscoveredSkills = useDiscoverStore((s) => s.loadDiscoveredSkills);
 
   const [expanded, setExpanded] = useState(true);
+  const [showAllPlatforms, setShowAllPlatforms] = useState(() => {
+    try {
+      return window.localStorage.getItem(SHOW_ALL_PLATFORMS_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     loadCollections();
     loadDiscoveredSkills();
   }, [loadCollections, loadDiscoveredSkills]);
 
+  function toggleShowAllPlatforms() {
+    setShowAllPlatforms((previous) => {
+      const next = !previous;
+      try {
+        window.localStorage.setItem(SHOW_ALL_PLATFORMS_KEY, String(next));
+      } catch {
+        // Ignore storage failures and keep the in-memory preference.
+      }
+      return next;
+    });
+  }
+
   const platformAgents = agents.filter(
-    (a) => a.id !== "central" && a.is_enabled
+    (a) =>
+      a.id !== "central" &&
+      a.is_enabled &&
+      (showAllPlatforms || (skillsByAgent[a.id] ?? 0) > 0)
   );
   const lobsterAgents = platformAgents.filter((a) => a.category === "lobster");
   const codingAgents = platformAgents.filter((a) => a.category !== "lobster");
@@ -246,6 +271,32 @@ export function Sidebar() {
               </>
             )}
           </>
+        )}
+
+        {!isLoading && (
+          <div className={cn(
+            "pt-2",
+            expanded ? "px-1" : "flex justify-center"
+          )}>
+            <button
+              onClick={toggleShowAllPlatforms}
+              title={showAllPlatforms ? t("sidebar.hideEmptyPlatforms") : t("sidebar.showAllPlatforms")}
+              aria-label={showAllPlatforms ? t("sidebar.hideEmptyPlatforms") : t("sidebar.showAllPlatforms")}
+              className={cn(
+                "cursor-pointer rounded-md text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary",
+                expanded
+                  ? "flex w-full items-center gap-2 px-2.5 py-1.5 text-xs text-left"
+                  : "p-2"
+              )}
+            >
+              {showAllPlatforms ? <EyeOff className="size-4 shrink-0" /> : <Eye className="size-4 shrink-0" />}
+              {expanded && (
+                <span className="truncate">
+                  {showAllPlatforms ? t("sidebar.hideEmptyPlatforms") : t("sidebar.showAllPlatforms")}
+                </span>
+              )}
+            </button>
+          </div>
         )}
       </div>
 

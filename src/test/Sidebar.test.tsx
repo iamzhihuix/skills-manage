@@ -108,6 +108,7 @@ function renderSidebar(initialPath = "/central") {
 describe("Sidebar", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage?.clear?.();
     // Default: collection store returns empty state.
     vi.mocked(useCollectionStore).mockImplementation((selector) =>
       selector(defaultCollectionState)
@@ -235,6 +236,42 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("button", { name: /Claude Code/ })).not.toBeInTheDocument();
   });
 
+  it("hides agents with zero skills by default", () => {
+    vi.mocked(usePlatformStore).mockReturnValue({
+      ...defaultStoreState,
+      skillsByAgent: {
+        "claude-code": 0,
+        cursor: 3,
+        central: 10,
+      },
+    });
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>
+    );
+    expect(screen.queryByRole("button", { name: /Claude Code/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cursor/ })).toBeInTheDocument();
+  });
+
+  it("shows hidden agents after clicking toggle", () => {
+    vi.mocked(usePlatformStore).mockReturnValue({
+      ...defaultStoreState,
+      skillsByAgent: {
+        "claude-code": 0,
+        cursor: 3,
+        central: 10,
+      },
+    });
+    render(
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByRole("button", { name: "显示所有平台" }));
+    expect(screen.getByRole("button", { name: /Claude Code/ })).toBeInTheDocument();
+  });
+
   // ── Navigation ────────────────────────────────────────────────────────────
 
   it("platform buttons are clickable", () => {
@@ -292,6 +329,11 @@ describe("Sidebar", () => {
   it("renders Discover entry in sidebar", () => {
     renderSidebar();
     expect(screen.getByRole("button", { name: "项目技能库" })).toBeInTheDocument();
+  });
+
+  it("renders show all platforms toggle", () => {
+    renderSidebar();
+    expect(screen.getByRole("button", { name: "显示所有平台" })).toBeInTheDocument();
   });
 
   // ── Collapse Toggle ───────────────────────────────────────────────────────
