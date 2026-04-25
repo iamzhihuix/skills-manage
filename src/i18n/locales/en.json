@@ -547,6 +547,14 @@
     "githubImportResultActionRestart": "Start another import",
     "githubImportResultSkippedTitle": "Skipped items",
     "githubImportResultSkippedNone": "No skills were skipped.",
-    "githubPatSettingsHint": "Open Settings and save a GitHub Personal Access Token to use authenticated direct GitHub requests for this import flow."
+    "githubPatSettingsHint": "Open Settings and save a GitHub Personal Access Token to use authenticated direct GitHub requests for this import flow.",
+    "gitPull": "Pull from Remote",
+    "gitPullSuccess": "Pull successful",
+    "gitPullError": "Pull failed: {{error}}",
+    "commitMessage": "Commit message",
+    "commitMessagePlaceholder": "Describe your changes...",
+    "saveAndPush": "Save & Push",
+    "savePushSuccess": "Saved and pushed to remote",
+    "savePushError": "Save & push failed: {{error}}"
   }
 }

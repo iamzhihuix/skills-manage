@@ -92,6 +92,10 @@ pub fn run() {
             commands::github_import::preview_github_repo_import,
             commands::github_import::import_github_repo_skills,
             commands::github_import::fetch_github_skill_markdown,
+            // Git
+            commands::git::write_skill_file,
+            commands::git::git_pull,
+            commands::git::git_commit_and_push,
             // Marketplace
             commands::marketplace::list_registries,
             commands::marketplace::add_registry,

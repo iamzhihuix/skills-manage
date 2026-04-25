@@ -16,6 +16,7 @@ import {
   Monitor,
   FolderOpen,
   Lock,
+  GitCommitHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PlatformIcon } from "@/components/platform/PlatformIcon";
@@ -23,6 +24,7 @@ import { SkillFrontmatterCard } from "@/components/skill/SkillFrontmatterCard";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { useSkillDetailStore } from "@/stores/skillDetailStore";
 import { usePlatformStore } from "@/stores/platformStore";
+import { Input } from "@/components/ui/input";
 import { CollectionPickerDialog } from "@/components/collection/CollectionPickerDialog";
 import { AgentWithStatus, ClaudeSourceKind, SkillDetailRequest, SkillInstallation } from "@/types";
 import { cn } from "@/lib/utils";
@@ -308,6 +310,14 @@ export function SkillDetailView({
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const addToCollectionButtonRef = useRef<HTMLButtonElement | null>(null);
 
+  // Git editing state
+  const [isSaving, setIsSaving] = useState(false);
+  const [editedContent, setEditedContent] = useState("");
+  const [commitMessage, setCommitMessage] = useState("");
+
+  const centralAgent = agents.find((a) => a.id === "central");
+  const centralSkillsDir = centralAgent?.global_skills_dir;
+
   useEffect(() => {
     if (detail?.is_read_only && isCollectionPickerOpen) {
       setIsCollectionPickerOpen(false);
@@ -441,6 +451,20 @@ export function SkillDetailView({
     ? parseFrontmatter(content)
     : { frontmatterRaw: "", frontmatterData: {}, body: "" };
   const isBrowserFallback = !isTauriRuntime() && !isLoading && !detail && !error && !isFileMode;
+  const canEdit =
+    !isBrowserFallback &&
+    !isFileMode &&
+    !!detail &&
+    !detail.is_read_only &&
+    !!detail.file_path &&
+    !!centralSkillsDir;
+
+  // Sync editedContent when content loads (reset when content changes)
+  useEffect(() => {
+    if (content && !editedContent) {
+      setEditedContent(content);
+    }
+  }, [content]); // eslint-disable-line react-hooks/exhaustive-deps
   const effectiveName = isFileMode
     ? (discoverMetadata?.name ?? "")
     : (detail?.name ?? detailRequest?.skillId ?? "");
@@ -540,13 +564,24 @@ export function SkillDetailView({
                   )}
                 </div>
               ) : activeTab === "raw" ? (
-                <pre
-                  className="p-6 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80"
-                  role="tabpanel"
-                  aria-label={t("detail.rawSource")}
-                >
-                  {content ?? t("detail.noContent")}
-                </pre>
+                canEdit ? (
+                  <textarea
+                    className="p-6 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80 bg-transparent border-none resize-none w-full h-full outline-none"
+                    role="tabpanel"
+                    aria-label={t("detail.rawSource")}
+                    value={editedContent}
+                    onChange={(e) => setEditedContent(e.target.value)}
+                    spellCheck={false}
+                  />
+                ) : (
+                  <pre
+                    className="p-6 text-[12px] leading-5 font-mono whitespace-pre-wrap break-words text-foreground/80"
+                    role="tabpanel"
+                    aria-label={t("detail.rawSource")}
+                  >
+                    {content ?? t("detail.noContent")}
+                  </pre>
+                )
               ) : (
                 <div
                   className="p-6 space-y-4"
@@ -868,6 +903,57 @@ export function SkillDetailView({
                       </div>
                     )}
                   </section>
+
+                  {/* Git commit form */}
+                  {canEdit && (
+                    <section aria-label={t("marketplace.commitMessage")}>
+                      <SectionLabel>{t("marketplace.commitMessage")}</SectionLabel>
+                      <div className="space-y-2">
+                        <Input
+                          placeholder={t("marketplace.commitMessagePlaceholder")}
+                          value={commitMessage}
+                          onChange={(e) => setCommitMessage(e.target.value)}
+                          className="text-xs"
+                          disabled={isSaving}
+                        />
+                        <Button
+                          onClick={async () => {
+                            if (!detail || !commitMessage.trim() || !centralSkillsDir) return;
+                            setIsSaving(true);
+                            try {
+                              await invoke("write_skill_file", {
+                                path: detail.file_path,
+                                content: editedContent,
+                              });
+                              await invoke("git_commit_and_push", {
+                                repoPath: centralSkillsDir,
+                                filePath: detail.file_path,
+                                message: commitMessage.trim(),
+                              });
+                              toast.success(t("marketplace.savePushSuccess"));
+                              setCommitMessage("");
+                            } catch (err) {
+                              toast.error(
+                                t("marketplace.savePushError", { error: String(err) })
+                              );
+                            } finally {
+                              setIsSaving(false);
+                            }
+                          }}
+                          disabled={!commitMessage.trim() || isSaving}
+                          className="w-full gap-2"
+                          size="sm"
+                        >
+                          {isSaving ? (
+                            <Loader2 className="size-3.5 animate-spin" />
+                          ) : (
+                            <GitCommitHorizontal className="size-3.5" />
+                          )}
+                          {t("marketplace.saveAndPush")}
+                        </Button>
+                      </div>
+                    </section>
+                  )}
                 </>
               ) : null}
             </aside>

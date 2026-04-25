@@ -212,3 +212,9 @@ SQLite 数据库位于 `~/.skillsmanage/db.sqlite`，首次启动时会自动初
 ## 许可证
 
 本项目使用 Apache License 2.0，详见 [LICENSE](LICENSE)。
+
+
+
+
+使用方式，自己使用skill.md 把skill 安装到 .agent 的目录下，
+使用freesync 同步skill 到中央技能库的git 仓库中，这是你自己维护的仓库。

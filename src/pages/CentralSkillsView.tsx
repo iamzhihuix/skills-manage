@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Search, RefreshCw, Blocks, FolderOpen, Settings, ArrowUpDown } from "lucide-react";
+import { Search, RefreshCw, Blocks, FolderOpen, Settings, ArrowUpDown, GitPullRequest } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -18,7 +18,7 @@ import { useMarketplaceStore } from "@/stores/marketplaceStore";
 import { VirtualizedList } from "@/components/ui/virtualized-list";
 import { formatPathForDisplay } from "@/lib/path";
 import { buildSearchText, normalizeSearchQuery } from "@/lib/search";
-import { isTauriRuntime } from "@/lib/tauri";
+import { isTauriRuntime, invoke } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 const BROWSER_FIXTURE_AGENTS: AgentWithStatus[] = [
@@ -223,6 +223,7 @@ export function CentralSkillsView() {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isGitHubImportOpen, setIsGitHubImportOpen] = useState(false);
   const [githubRepoUrl, setGitHubRepoUrl] = useState("");
+  const [isPulling, setIsPulling] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const detailButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -341,6 +342,27 @@ export function CentralSkillsView() {
     }
   }
 
+  async function handleGitPull() {
+    const centralAgent = agents.find((a) => a.id === "central");
+    if (!centralAgent?.global_skills_dir) {
+      toast.error("Central skills directory not found");
+      return;
+    }
+    setIsPulling(true);
+    try {
+      await invoke<string>("git_pull", {
+        repoPath: centralAgent.global_skills_dir,
+      });
+      toast.success(t("marketplace.gitPullSuccess"));
+      // Refresh skills after pull to show any new/updated skills.
+      await loadCentralSkills();
+    } catch (err) {
+      toast.error(t("marketplace.gitPullError", { error: String(err) }));
+    } finally {
+      setIsPulling(false);
+    }
+  }
+
   async function handleGitHubPreview() {
     try {
       return await previewGitHubRepoImport(githubRepoUrl);
@@ -426,9 +448,21 @@ export function CentralSkillsView() {
             {centralSkillsDir}
           </p>
         </div>
-        <Button variant="outline" onClick={() => setIsGitHubImportOpen(true)}>
-          {t("marketplace.githubImportSecondaryCta")}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleGitPull}
+            disabled={isPulling || isLoading}
+            className="gap-2"
+          >
+            <GitPullRequest className={`size-4 ${isPulling ? "animate-spin" : ""}`} />
+            {t("marketplace.gitPull")}
+          </Button>
+          <Button variant="outline" onClick={() => setIsGitHubImportOpen(true)}>
+            {t("marketplace.githubImportSecondaryCta")}
+          </Button>
+        </div>
       </div>
 
       {/* Search bar */}

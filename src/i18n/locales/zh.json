@@ -547,6 +547,14 @@
     "githubImportResultActionRestart": "开始新的导入",
     "githubImportResultSkippedTitle": "已跳过项目",
     "githubImportResultSkippedNone": "没有跳过任何技能。",
-    "githubPatSettingsHint": "请前往设置并保存 GitHub Personal Access Token，让该导入流程改用经过认证的直连 GitHub 请求。"
+    "githubPatSettingsHint": "请前往设置并保存 GitHub Personal Access Token，让该导入流程改用经过认证的直连 GitHub 请求。",
+    "gitPull": "从远程拉取",
+    "gitPullSuccess": "拉取成功",
+    "gitPullError": "拉取失败: {{error}}",
+    "commitMessage": "提交信息",
+    "commitMessagePlaceholder": "描述本次改动...",
+    "saveAndPush": "保存并推送",
+    "savePushSuccess": "已保存并推送到远程仓库",
+    "savePushError": "保存推送失败: {{error}}"
   }
 }
