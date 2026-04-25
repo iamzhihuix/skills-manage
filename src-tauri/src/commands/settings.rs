@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::db::{self, DbPool, ScanDirectory};
-use crate::path_utils::{expand_home_path, path_to_string};
+use crate::path_utils::{central_skills_dir, expand_home_path, path_to_string};
 use crate::AppState;
 
 // ─── Core Implementations (testable without Tauri State) ──────────────────────
@@ -107,6 +107,68 @@ pub async fn set_setting(
     value: String,
 ) -> Result<(), String> {
     set_setting_impl(&state.db, &key, &value).await
+}
+
+// ─── Central Skills Directory ────────────────────────────────────────────────
+
+/// Get the central skills directory path.
+/// Reads from settings, falls back to the default `~/.agents/skills/`.
+pub async fn get_central_skills_dir_impl(pool: &DbPool) -> Result<String, String> {
+    let setting = db::get_setting(pool, "central_skills_dir").await?;
+    match setting {
+        Some(path) if !path.trim().is_empty() => Ok(path),
+        _ => Ok(path_to_string(&central_skills_dir())),
+    }
+}
+
+/// Return the hardcoded default central skills directory path (~/.agents/skills).
+pub fn get_default_central_skills_dir_impl() -> String {
+    path_to_string(&central_skills_dir())
+}
+
+/// Set the central skills directory path.
+/// Validates the path, saves to settings, and updates the central agent.
+/// Also cleans up the stale built-in scan directory entry for the old path.
+pub async fn set_central_skills_dir_impl(pool: &DbPool, path: &str) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Central skills directory path cannot be empty".to_string());
+    }
+    let expanded = path_to_string(&expand_home_path(path));
+
+    // Read the old central dir setting and remove its scan directory entry.
+    if let Ok(Some(old_path)) = db::get_setting(pool, "central_skills_dir").await {
+        if !old_path.trim().is_empty() && old_path != expanded {
+            let _ = db::delete_builtin_scan_directory(pool, &old_path).await;
+        }
+    }
+
+    db::set_setting(pool, "central_skills_dir", &expanded).await?;
+    db::update_agent_global_skills_dir(pool, "central", &expanded).await?;
+    Ok(expanded)
+}
+
+/// Tauri command: get the central skills directory path.
+#[tauri::command]
+pub async fn get_central_skills_dir(
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    get_central_skills_dir_impl(&state.db).await
+}
+
+/// Tauri command: set the central skills directory path.
+#[tauri::command]
+pub async fn set_central_skills_dir(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<String, String> {
+    set_central_skills_dir_impl(&state.db, &path).await
+}
+
+/// Tauri command: return the hardcoded default central skills directory path.
+#[tauri::command]
+pub fn get_default_central_skills_dir() -> String {
+    get_default_central_skills_dir_impl()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -395,5 +457,80 @@ mod tests {
         assert!(result.is_ok(), "Setting an empty value should succeed");
         let value = get_setting_impl(&pool, "empty-val").await.unwrap();
         assert_eq!(value.as_deref(), Some(""));
+    }
+
+    // ── Central Skills Directory ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_get_central_skills_dir_default_when_not_set() {
+        let pool = setup_test_db().await;
+        let path = get_central_skills_dir_impl(&pool).await.unwrap();
+        // When no setting, should return the default ~/.agents/skills/
+        assert!(
+            path.contains(".agents/skills"),
+            "Default path should contain '.agents/skills', got: {}",
+            path
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_central_skills_dir_saves_and_updates() {
+        let pool = setup_test_db().await;
+        let new_path = "/tmp/custom-central-skills";
+        let result = set_central_skills_dir_impl(&pool, new_path).await.unwrap();
+        assert_eq!(result, new_path, "Should return the expanded path");
+
+        // Verify setting is persisted
+        let saved = get_setting_impl(&pool, "central_skills_dir")
+            .await
+            .unwrap();
+        assert_eq!(saved.as_deref(), Some(new_path));
+
+        // Verify central agent is updated
+        let central = db::get_agent_by_id(&pool, "central").await.unwrap().unwrap();
+        assert_eq!(
+            central.global_skills_dir, new_path,
+            "Central agent's global_skills_dir should be updated"
+        );
+
+        // Verify get_central_skills_dir returns the new path
+        let retrieved = get_central_skills_dir_impl(&pool).await.unwrap();
+        assert_eq!(retrieved, new_path);
+    }
+
+    #[tokio::test]
+    async fn test_set_central_skills_dir_empty_fails() {
+        let pool = setup_test_db().await;
+        let result = set_central_skills_dir_impl(&pool, "  ").await;
+        assert!(result.is_err(), "Empty path should fail validation");
+    }
+
+    #[tokio::test]
+    async fn test_set_central_skills_dir_expands_tilde() {
+        let pool = setup_test_db().await;
+        let result = set_central_skills_dir_impl(&pool, "~/.skillsmanage/custom-central")
+            .await
+            .unwrap();
+        assert!(
+            !result.starts_with('~'),
+            "Tilde paths must be expanded, got: {}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_central_skills_dir_after_clear() {
+        let pool = setup_test_db().await;
+        // Set a custom path
+        set_central_skills_dir_impl(&pool, "/tmp/custom").await.unwrap();
+        // Clear it by setting empty string via raw set_setting
+        set_setting_impl(&pool, "central_skills_dir", "").await.unwrap();
+        // Should fall back to default
+        let path = get_central_skills_dir_impl(&pool).await.unwrap();
+        assert!(
+            path.contains(".agents/skills"),
+            "After clearing, should return default path, got: {}",
+            path
+        );
     }
 }

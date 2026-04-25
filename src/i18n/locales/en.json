@@ -271,6 +271,15 @@
     "githubPatSaved": "GitHub token saved",
     "githubPatCleared": "GitHub token cleared",
     "githubPatClear": "Clear token",
+    "centralDirTitle": "Central Skills Directory",
+    "centralDirDesc": "Configure the storage path for the central skills repository. After changing, a rescan is recommended.",
+    "centralDirLabel": "Path",
+    "centralDirSave": "Save",
+    "centralDirReset": "Reset to default",
+    "centralDirSaved": "Central directory path saved",
+    "centralDirResetDone": "Reset to default path",
+    "centralDirLoading": "Loading...",
+    "centralDirSaving": "Saving...",
     "about": "About",
     "appVersion": "App Version",
     "dbPath": "Database Path",
@@ -538,6 +547,14 @@
     "githubImportResultActionRestart": "Start another import",
     "githubImportResultSkippedTitle": "Skipped items",
     "githubImportResultSkippedNone": "No skills were skipped.",
-    "githubPatSettingsHint": "Open Settings and save a GitHub Personal Access Token to use authenticated direct GitHub requests for this import flow."
+    "githubPatSettingsHint": "Open Settings and save a GitHub Personal Access Token to use authenticated direct GitHub requests for this import flow.",
+    "gitPull": "Pull from Remote",
+    "gitPullSuccess": "Pull successful",
+    "gitPullError": "Pull failed: {{error}}",
+    "commitMessage": "Commit message",
+    "commitMessagePlaceholder": "Describe your changes...",
+    "saveAndPush": "Save & Push",
+    "savePushSuccess": "Saved and pushed to remote",
+    "savePushError": "Save & push failed: {{error}}"
   }
 }

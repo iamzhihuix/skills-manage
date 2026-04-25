@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"L:\\\\Documents\\\\GitHub\\\\skills-manage\\\\src-tauri\" && cargo check --lib 2>&1)"
+    ]
+  }
+}

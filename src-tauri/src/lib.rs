@@ -76,6 +76,9 @@ pub fn run() {
             commands::settings::set_scan_directory_active,
             commands::settings::get_setting,
             commands::settings::set_setting,
+            commands::settings::get_central_skills_dir,
+            commands::settings::set_central_skills_dir,
+            commands::settings::get_default_central_skills_dir,
             // Discover
             commands::discover::discover_scan_roots,
             commands::discover::get_scan_roots,
@@ -89,6 +92,10 @@ pub fn run() {
             commands::github_import::preview_github_repo_import,
             commands::github_import::import_github_repo_skills,
             commands::github_import::fetch_github_skill_markdown,
+            // Git
+            commands::git::write_skill_file,
+            commands::git::git_pull,
+            commands::git::git_commit_and_push,
             // Marketplace
             commands::marketplace::list_registries,
             commands::marketplace::add_registry,
