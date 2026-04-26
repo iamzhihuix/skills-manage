@@ -121,9 +121,10 @@ describe("InstallDialog", () => {
     expect(screen.getByText("(未检测到)")).toBeInTheDocument();
   });
 
-  it("shows symlink/copy radio options", () => {
+  it("shows auto/symlink/copy radio options", () => {
     renderDialog();
     // The radio items are rendered
+    expect(screen.getByText("自动")).toBeInTheDocument();
     expect(screen.getByText("符号链接")).toBeInTheDocument();
     expect(screen.getByText("复制安装")).toBeInTheDocument();
   });
@@ -158,12 +159,35 @@ describe("InstallDialog", () => {
     });
   });
 
-  it("passes 'symlink' method to onInstall by default", async () => {
+  it("passes 'auto' method to onInstall by default", async () => {
     mockOnInstall.mockResolvedValueOnce(undefined);
 
     renderDialog();
     const confirmBtn = screen.getByRole("button", {
       name: /安装到 .* 个平台/i,
+    });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(mockOnInstall).toHaveBeenCalledWith(
+        "frontend-design",
+        expect.any(Array),
+        "auto"
+      );
+    });
+  });
+
+  it("passes 'symlink' method to onInstall when symlink is selected", async () => {
+    mockOnInstall.mockResolvedValueOnce(undefined);
+
+    renderDialog();
+
+    const symlinkRadio = screen.getByText("符号链接").closest("label");
+    expect(symlinkRadio).not.toBeNull();
+    fireEvent.click(symlinkRadio!);
+
+    const confirmBtn = screen.getByRole("button", {
+      name: /安装到.* 个平台/i,
     });
     fireEvent.click(confirmBtn);
 

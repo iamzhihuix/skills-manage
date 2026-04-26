@@ -643,13 +643,22 @@ fn classify_reqwest_error(e: &reqwest::Error, fallback_tried: bool) -> Explanati
             "系统代理可能拦截了请求。请尝试为该域名配置直连规则或切换区域端点".to_string(),
             true,
         )
+    } else if e.is_connect()
+        || low.contains("client error (connect)")
+        || low.contains("tcp connect error")
+    {
+        (
+            ExplanationErrorKind::Connect,
+            "无法建立连接。请确认 URL 可从本机访问，或尝试切换区域端点".to_string(),
+            true,
+        )
     } else if e.is_timeout() || low.contains("timed out") {
         (
             ExplanationErrorKind::Timeout,
             "请求超时，可能网络不通或被防火墙拦截。可在终端 `curl -v <url>` 验证连通性".to_string(),
             true,
         )
-    } else if e.is_connect() || low.contains("connect") {
+    } else if low.contains("connect") {
         (
             ExplanationErrorKind::Connect,
             "无法建立连接。请确认 URL 可从本机访问，或尝试切换区域端点".to_string(),
@@ -1453,32 +1462,40 @@ mod tests {
     /// developer has `HTTP(S)_PROXY` set in their environment.
     #[tokio::test]
     async fn format_reqwest_error_surfaces_actionable_hint() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind local port");
+        let url = format!("http://{}/", listener.local_addr().expect("local addr"));
+        drop(listener);
+
         let client = reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(std::time::Duration::from_millis(500))
             .build()
             .expect("build client");
         let err = client
-            .post("http://127.0.0.1:1/")
+            .post(url)
             .send()
             .await
             .expect_err("expected connect failure");
         let msg = format_reqwest_error(&err);
         assert!(
-            msg.contains("切换区域端点") || msg.contains("建立连接"),
-            "expected actionable Chinese hint in formatted error, got: {msg}"
+            msg.lines().count() >= 2 && msg.contains("tcp connect error"),
+            "expected formatted error to include source chain and actionable hint, got: {msg}"
         );
     }
 
     #[tokio::test]
     async fn classify_connect_error_as_connect_kind() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind local port");
+        let url = format!("http://{}/", listener.local_addr().expect("local addr"));
+        drop(listener);
+
         let client = reqwest::Client::builder()
             .no_proxy()
             .connect_timeout(std::time::Duration::from_millis(500))
             .build()
             .expect("build client");
         let err = client
-            .post("http://127.0.0.1:1/")
+            .post(url)
             .send()
             .await
             .expect_err("expected connect failure");

@@ -33,7 +33,7 @@ import {
 } from "@/components/ui/dialog";
 import { isTauriRuntime } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import { InstallDialog } from "@/components/central/InstallDialog";
+import { InstallDialog, type InstallMethod } from "@/components/central/InstallDialog";
 import { MarkdownPreview } from "@/components/marketplace/MarkdownPreview";
 import {
   useMarketplaceStore,
@@ -85,7 +85,7 @@ interface GitHubRepoImportWizardProps {
   onInstallImportedSkill?: (
     skillId: string,
     agentIds: string[],
-    method: "symlink" | "copy",
+    method: InstallMethod,
   ) => Promise<void>;
   onAfterImportSuccess?: (
     result: GitHubRepoImportResult,
@@ -558,7 +558,7 @@ export function GitHubRepoImportWizard({
   async function handleInstallDialogConfirm(
     skillId: string,
     agentIds: string[],
-    method: "symlink" | "copy",
+    method: InstallMethod,
   ) {
     if (!onInstallImportedSkill) return;
     await onInstallImportedSkill(skillId, agentIds, method);

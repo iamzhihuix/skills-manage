@@ -9,7 +9,7 @@ import { usePlatformStore } from "@/stores/platformStore";
 import { useSkillStore } from "@/stores/skillStore";
 import { UnifiedSkillCard } from "@/components/skill/UnifiedSkillCard";
 import { SkillDetailDrawer } from "@/components/skill/SkillDetailDrawer";
-import { InstallDialog } from "@/components/central/InstallDialog";
+import { InstallDialog, type InstallMethod } from "@/components/central/InstallDialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AgentWithStatus, ScannedSkill, SkillWithLinks } from "@/types";
@@ -366,7 +366,7 @@ export function CentralSkillsView() {
   async function handleInstallImportedSkill(
     skillId: string,
     agentIds: string[],
-    method: "symlink" | "copy"
+    method: InstallMethod
   ) {
     await handleInstall(skillId, agentIds, method);
     await Promise.all(agentIds.map((agentId) => getSkillsByAgent(agentId)));

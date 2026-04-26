@@ -734,8 +734,8 @@ pub async fn import_discovered_skill_to_central(
 
 /// Import a discovered skill to a specific platform's global skills directory.
 ///
-/// Creates a symlink (or copy) from the discovered skill's dir to the platform's
-/// global skills directory.
+/// Adopts the discovered skill into central, then installs it from the central
+/// canonical source to the platform's global skills directory.
 #[tauri::command]
 pub async fn import_discovered_skill_to_platform(
     state: State<'_, AppState>,
@@ -761,57 +761,27 @@ pub async fn import_discovered_skill_to_platform(
         .ok_or_else(|| "Cannot extract skill directory name".to_string())?
         .to_string();
 
-    let agent_dir = PathBuf::from(&agent.global_skills_dir);
-    let target_path = agent_dir.join(&skill_dir_name);
+    if db::get_skill_by_id(pool, &skill_dir_name).await?.is_none() {
+        let now = Utc::now().to_rfc3339();
+        let source_skill_md_path = Path::new(&skill.dir_path).join("SKILL.md");
+        let info = super::scanner::parse_skill_md(&source_skill_md_path)
+            .ok_or_else(|| format!("Failed to parse '{}'", source_skill_md_path.display()))?;
 
-    // Ensure agent skills dir exists.
-    std::fs::create_dir_all(&agent_dir)
-        .map_err(|e| format!("Failed to create agent skills directory: {}", e))?;
-
-    // Check if already installed.
-    if target_path.exists() || std::fs::symlink_metadata(&target_path).is_ok() {
-        return Err(format!(
-            "Skill '{}' already exists in {}",
-            skill_dir_name, agent.display_name
-        ));
-    }
-
-    // Create symlink from discovered skill dir to platform dir.
-    let src_path = Path::new(&skill.dir_path);
-    let relative_target = super::linker::symlink_target_path(&agent_dir, src_path);
-    super::linker::create_symlink(&relative_target, &target_path)?;
-
-    // Record the installation.
-    let now = Utc::now().to_rfc3339();
-
-    // Also ensure the skill is in the skills table.
-    let skill_md_path = src_path.join("SKILL.md");
-    let info = super::scanner::parse_skill_md(&skill_md_path);
-
-    if let Some(skill_info) = info {
         let db_skill = db::Skill {
             id: skill_dir_name.clone(),
-            name: skill_info.name,
-            description: skill_info.description,
-            file_path: skill_md_path.to_string_lossy().into_owned(),
+            name: info.name,
+            description: info.description,
+            file_path: source_skill_md_path.to_string_lossy().into_owned(),
             canonical_path: None,
             is_central: false,
-            source: Some("symlink".to_string()),
+            source: Some("discovered".to_string()),
             content: None,
-            scanned_at: now.clone(),
+            scanned_at: now,
         };
         db::upsert_skill(pool, &db_skill).await?;
     }
 
-    let installation = db::SkillInstallation {
-        skill_id: skill_dir_name.clone(),
-        agent_id: agent_id.clone(),
-        installed_path: target_path.to_string_lossy().into_owned(),
-        link_type: "symlink".to_string(),
-        symlink_target: Some(skill.dir_path.clone()),
-        created_at: now,
-    };
-    db::upsert_skill_installation(pool, &installation).await?;
+    super::linker::install_skill_to_agent_auto_impl(pool, &skill_dir_name, &agent.id).await?;
 
     // NOTE: We intentionally do NOT delete the discovered skill record here.
     // Keeping the record allows multi-platform install (importing the same
@@ -1208,11 +1178,23 @@ mod tests {
 
         assert!(result.is_ok(), "import should succeed: {:?}", result);
 
-        // Verify the symlink was created.
+        // Verify the skill was installed. Windows can fall back to a copied
+        // directory when symlink privileges are unavailable.
         let link_path = agent_dir.join("my-skill");
-        assert!(link_path.exists(), "symlink target should exist");
-        let meta = std::fs::symlink_metadata(&link_path).unwrap();
-        assert!(meta.is_symlink(), "should be a symlink");
+        assert!(
+            tmp.path().join("central-skills/my-skill/SKILL.md").exists(),
+            "platform import should first adopt the skill into central"
+        );
+        assert!(link_path.exists(), "installed skill should exist");
+        let installations = db::get_skill_installations(&pool, "my-skill")
+            .await
+            .unwrap();
+        assert_eq!(installations.len(), 1);
+        assert!(
+            matches!(installations[0].link_type.as_str(), "symlink" | "copy"),
+            "unexpected link type: {}",
+            installations[0].link_type
+        );
 
         // Verify discovered skill record is KEPT (not deleted) after platform install.
         // This enables multi-platform install — the record stays so it can be
@@ -1245,6 +1227,43 @@ mod tests {
             .to_string();
 
         let target_path = agent_dir.join(&skill_dir_name);
+        let central_dir = agent_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("central-skills");
+        std::fs::create_dir_all(&central_dir)
+            .map_err(|e| format!("Failed to create central skills directory: {}", e))?;
+
+        sqlx::query("UPDATE agents SET global_skills_dir = ? WHERE id = 'central'")
+            .bind(central_dir.to_string_lossy().as_ref())
+            .execute(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if db::get_agent_by_id(pool, agent_id).await?.is_some() {
+            sqlx::query("UPDATE agents SET global_skills_dir = ? WHERE id = ?")
+                .bind(agent_dir.to_string_lossy().as_ref())
+                .bind(agent_id)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        } else {
+            db::insert_custom_agent(
+                pool,
+                &db::Agent {
+                    id: agent_id.to_string(),
+                    display_name: agent_id.to_string(),
+                    category: "test".to_string(),
+                    global_skills_dir: agent_dir.to_string_lossy().into_owned(),
+                    project_skills_dir: None,
+                    icon_name: None,
+                    is_detected: true,
+                    is_builtin: false,
+                    is_enabled: true,
+                },
+            )
+            .await?;
+        }
 
         std::fs::create_dir_all(agent_dir)
             .map_err(|e| format!("Failed to create agent skills directory: {}", e))?;
@@ -1256,40 +1275,28 @@ mod tests {
             ));
         }
 
-        let src_path = Path::new(&skill.dir_path);
-        let relative_target = super::super::linker::symlink_target_path(agent_dir, src_path);
-        super::super::linker::create_symlink(&relative_target, &target_path)?;
+        if db::get_skill_by_id(pool, &skill_dir_name).await?.is_none() {
+            let now = Utc::now().to_rfc3339();
+            let source_skill_md_path = Path::new(&skill.dir_path).join("SKILL.md");
+            let info = super::super::scanner::parse_skill_md(&source_skill_md_path)
+                .ok_or_else(|| format!("Failed to parse '{}'", source_skill_md_path.display()))?;
 
-        // Record the installation.
-        let now = Utc::now().to_rfc3339();
-
-        let skill_md_path = src_path.join("SKILL.md");
-        let info = super::super::scanner::parse_skill_md(&skill_md_path);
-
-        if let Some(skill_info) = info {
             let db_skill = db::Skill {
                 id: skill_dir_name.clone(),
-                name: skill_info.name,
-                description: skill_info.description,
-                file_path: skill_md_path.to_string_lossy().into_owned(),
+                name: info.name,
+                description: info.description,
+                file_path: source_skill_md_path.to_string_lossy().into_owned(),
                 canonical_path: None,
                 is_central: false,
-                source: Some("symlink".to_string()),
+                source: Some("discovered".to_string()),
                 content: None,
-                scanned_at: now.clone(),
+                scanned_at: now,
             };
             db::upsert_skill(pool, &db_skill).await?;
         }
 
-        let installation = db::SkillInstallation {
-            skill_id: skill_dir_name.clone(),
-            agent_id: agent_id.to_string(),
-            installed_path: target_path.to_string_lossy().into_owned(),
-            link_type: "symlink".to_string(),
-            symlink_target: Some(skill.dir_path.clone()),
-            created_at: now,
-        };
-        db::upsert_skill_installation(pool, &installation).await?;
+        super::super::linker::install_skill_to_agent_auto_impl(pool, &skill_dir_name, agent_id)
+            .await?;
 
         // NOTE: Intentionally do NOT delete the discovered skill record.
         // This allows multi-platform install (importing the same discovered
@@ -2247,7 +2254,8 @@ mod tests {
         .await;
         assert!(result_b.is_ok(), "second import should succeed");
 
-        // Both symlinks should exist.
+        // Both installs should exist. Windows can fall back to copied
+        // directories when symlink privileges are unavailable.
         assert!(agent_dir_a.join("my-skill").exists());
         assert!(agent_dir_b.join("my-skill").exists());
 
