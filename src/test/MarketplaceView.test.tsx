@@ -6,6 +6,7 @@ import type {
   GitHubRepoPreview,
   GitHubRepoImportResult,
   MarketplaceSkill,
+  SkillsShSkill,
   SkillRegistry,
 } from "@/types";
 
@@ -20,6 +21,8 @@ const mockRescan = vi.fn();
 const mockLoadCentralSkills = vi.fn();
 const mockInstallCentralSkill = vi.fn();
 const mockGetSkillsByAgent = vi.fn();
+const mockSearchSkillsSh = vi.fn();
+const mockInstallFromSkillsSh = vi.fn();
 
 const platformAgents: AgentWithStatus[] = [
   {
@@ -45,6 +48,8 @@ const platformAgents: AgentWithStatus[] = [
 type StoreState = {
   registries: SkillRegistry[];
   installingIds: Set<string>;
+  skillsShResults: SkillsShSkill[];
+  isSkillsShLoading: boolean;
   githubImport: {
     isPreviewLoading: boolean;
     isImporting: boolean;
@@ -58,6 +63,8 @@ type StoreState = {
 const storeState: StoreState = {
   registries: [],
   installingIds: new Set<string>(),
+  skillsShResults: [],
+  isSkillsShLoading: false,
   githubImport: {
     isPreviewLoading: false,
     isImporting: false,
@@ -148,11 +155,15 @@ vi.mock("@/stores/marketplaceStore", () => ({
     selector({
       registries: storeState.registries,
       installingIds: storeState.installingIds,
+      skillsShResults: storeState.skillsShResults,
+      isSkillsShLoading: storeState.isSkillsShLoading,
       githubImport: storeState.githubImport,
       loadRegistries: mockLoadRegistries,
       loadPreviewSkills: mockLoadPreviewSkills,
       getNormalizedRegistryIdentity: mockGetNormalizedRegistryIdentity,
       installSkill: mockInstallSkill,
+      searchSkillsSh: mockSearchSkillsSh,
+      installFromSkillsSh: mockInstallFromSkillsSh,
       previewGitHubRepoImport: mockPreviewGitHubRepoImport,
       importGitHubRepoSkills: mockImportGitHubRepoSkills,
       resetGitHubImport: mockResetGitHubImport,
@@ -201,6 +212,9 @@ describe("MarketplaceView", () => {
     mockLoadCentralSkills.mockReset();
     mockInstallCentralSkill.mockReset();
     mockGetSkillsByAgent.mockReset();
+    mockSearchSkillsSh.mockReset();
+    mockInstallFromSkillsSh.mockReset();
+    vi.unstubAllGlobals();
 
     mockGetNormalizedRegistryIdentity.mockImplementation(normalizeRegistryIdentity);
     mockLoadPreviewSkills.mockResolvedValue([
@@ -218,6 +232,8 @@ describe("MarketplaceView", () => {
 
     storeState.registries = [makeRegistry("openai", "https://github.com/openai/skills")];
     storeState.installingIds = new Set<string>();
+    storeState.skillsShResults = [];
+    storeState.isSkillsShLoading = false;
     storeState.githubImport = {
       isPreviewLoading: false,
       isImporting: false,
@@ -441,5 +457,52 @@ describe("MarketplaceView", () => {
     expect(
       await screen.findByText(/GitHub Personal Access Token/i),
     ).toBeInTheDocument();
+  });
+
+  it("routes skills.sh detail install through installFromSkillsSh", async () => {
+    storeState.skillsShResults = [
+      {
+        id: "skillssh-openai-docs",
+        skill_id: "openai-docs",
+        name: "OpenAI Docs",
+        source: "openai/skills",
+        installs: 321,
+        stars: 1200,
+      },
+    ];
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => "---\nname: OpenAI Docs\n---\n\nBody",
+      }),
+    );
+
+    const invokeSpy = vi.spyOn(tauriBridge, "invoke").mockImplementation(async (command) => {
+      if (command === "resolve_skills_sh_url") {
+        return "https://example.com/openai-docs/SKILL.md";
+      }
+      if (command === "browse_skills_sh_directory") {
+        return [];
+      }
+      return undefined as never;
+    });
+
+    mockInstallFromSkillsSh.mockResolvedValue(undefined);
+
+    renderView();
+
+    fireEvent.click(screen.getByRole("button", { name: /skills\.sh/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Detail|详情/i }));
+
+    const sidebar = await screen.findByTestId("skill-detail-right-sidebar");
+    fireEvent.click(within(sidebar).getByRole("button", { name: /Install|安装/i }));
+
+    await waitFor(() => {
+      expect(mockInstallFromSkillsSh).toHaveBeenCalledWith("openai/skills", "openai-docs");
+    });
+    expect(mockInstallSkill).not.toHaveBeenCalled();
+    invokeSpy.mockRestore();
   });
 });

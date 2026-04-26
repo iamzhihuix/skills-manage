@@ -89,6 +89,11 @@ export interface SkillDetail extends Omit<Skill, "content"> {
   collections?: Collection[];
 }
 
+export interface SelectedSkillFile {
+  path: string;
+  relativePath: string;
+}
+
 export interface SkillDirectoryNode {
   name: string;
   path: string;
@@ -247,6 +252,21 @@ export interface MarketplaceSkill {
   is_installed: boolean;
   synced_at: string;
   cache_updated_at?: string | null;
+}
+
+export interface SkillsShSkill {
+  id: string;
+  skill_id: string;
+  name: string;
+  source: string;
+  installs: number;
+  stars?: number | null;
+}
+
+export interface SkillsShFileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
 }
 
 export interface GitHubRepoRef {

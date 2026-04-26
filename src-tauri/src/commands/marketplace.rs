@@ -41,6 +41,16 @@ pub struct MarketplaceSkill {
     pub cache_updated_at: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillsShSkill {
+    pub id: String,
+    pub skill_id: String,
+    pub name: String,
+    pub source: String,
+    pub installs: u64,
+    pub stars: Option<u64>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RegistrySyncStatus {
@@ -535,6 +545,491 @@ pub async fn install_marketplace_skill(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// ─── skills.sh Integration ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn search_skills_sh(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<SkillsShSkill>, String> {
+    let limit = limit.unwrap_or(10).min(50);
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manage/0.9.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp = client
+        .get("https://skills.sh/api/search")
+        .query(&[("q", &query), ("limit", &limit.to_string())])
+        .send()
+        .await
+        .map_err(|e| format!("skills.sh search failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("skills.sh returned {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    let mut skills: Vec<SkillsShSkill> = data
+        .get("skills")
+        .and_then(|s| s.as_array())
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|skill| {
+            let id = skill.get("id")?.as_str()?.to_string();
+            let skill_id = skill.get("skillId")?.as_str()?.to_string();
+            let name = skill.get("name")?.as_str()?.to_string();
+            let source = skill.get("source")?.as_str()?.to_string();
+            let installs = skill.get("installs")?.as_u64().unwrap_or(0);
+            Some(SkillsShSkill {
+                id,
+                skill_id,
+                name,
+                source,
+                installs,
+                stars: None,
+            })
+        })
+        .collect();
+
+    // Enrich with GitHub star counts for unique sources (use token if available)
+    let auth_str = github_import::github_direct_auth_from_settings(&state.db).await?;
+    let auth = auth_str.as_deref();
+
+    let unique_sources: Vec<&str> = {
+        let mut seen = std::collections::HashSet::new();
+        skills
+            .iter()
+            .filter(|s| seen.insert(s.source.as_str()))
+            .map(|s| s.source.as_str())
+            .collect()
+    };
+
+    let star_futs: Vec<_> = unique_sources
+        .iter()
+        .map(|source| {
+            let url = format!("https://api.github.com/repos/{}", source);
+            let c = client.clone();
+            let token = auth.map(|t| t.to_string());
+            async move {
+                let resp = github_import::send_with_auth_fallback(&c, &url, token.as_deref())
+                    .await
+                    .ok()?;
+                let data: serde_json::Value = resp.json().await.ok()?;
+                let stars = data.get("stargazers_count")?.as_u64()?;
+                Some((source.to_string(), stars))
+            }
+        })
+        .collect();
+
+    let star_results = futures_util::future::join_all(star_futs).await;
+    let star_map: std::collections::HashMap<String, u64> =
+        star_results.into_iter().flatten().collect();
+
+    for skill in &mut skills {
+        skill.stars = star_map.get(&skill.source).copied();
+    }
+
+    Ok(skills)
+}
+
+/// Common skill directory prefixes (most likely first).
+/// Only the top 2 are tried as direct GETs since >95% of skills live at
+/// one of these paths.  Everything else falls through to the tree API.
+const COMMON_SKILL_PREFIXES: &[&str] = &["", "skills/"];
+
+/// Extract the repo-relative directory path from a raw.githubusercontent.com SKILL.md URL.
+///
+/// # Examples
+///
+/// ```ignore
+/// let url = "https://raw.githubusercontent.com/owner/repo/branch/skills/my-skill/SKILL.md";
+/// assert_eq!(extract_dir_path(url), Some("skills/my-skill".to_string()));
+/// ```
+fn extract_dir_path(md_url: &str) -> Option<String> {
+    let suffix = md_url.strip_suffix("/SKILL.md")?;
+    let parts: Vec<&str> = suffix.split('/').collect();
+    // ["https:", "", "raw.githubusercontent.com", owner, repo, branch, ...rest]
+    if parts.len() > 6 {
+        Some(parts[6..].join("/"))
+    } else {
+        Some(String::new())
+    }
+}
+
+/// Find the repo-relative path to a skill directory in a downloaded snapshot
+/// by matching the last directory component against skill_id.
+fn find_skill_path_in_snapshot(
+    snapshot: &github_import::GitHubRepoSnapshot,
+    skill_id: &str,
+) -> Option<String> {
+    for path in snapshot.files.keys() {
+        let p = std::path::Path::new(path);
+        if p.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
+            continue;
+        }
+        let parent = p.parent().unwrap_or(std::path::Path::new(""));
+        if parent.file_name().and_then(|n| n.to_str()) == Some(skill_id) {
+            return Some(parent.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// Try to find SKILL.md in a repo.
+///
+/// Strategy (2 phases, max 3 HTTP calls):
+///   1. Try `""` and `"skills/"` prefixes in parallel (covers >95% of skills).
+///   2. Fetch the full repo tree via GitHub API and search for `{skill_id}/SKILL.md`
+///      (a single request that handles any directory depth).
+async fn find_skill_md_url(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+    branch: &str,
+    skill_id: &str,
+    auth: Option<&str>,
+) -> Result<String, String> {
+    // Phase 1: try common prefixes in parallel
+    let futs: Vec<_> = COMMON_SKILL_PREFIXES
+        .iter()
+        .map(|prefix| {
+            let path = format!("{}{}", prefix, skill_id);
+            let url = format!(
+                "https://raw.githubusercontent.com/{}/{}/{}/{}",
+                owner, repo, branch, path
+            );
+            // Try {prefix}{skill_id}/SKILL.md
+            let skill_md_url = format!("{}/SKILL.md", url);
+            async move {
+                let resp = client.get(&skill_md_url).send().await.ok()?;
+                if resp.status().is_success() {
+                    Some(skill_md_url)
+                } else {
+                    None
+                }
+            }
+        })
+        .collect();
+
+    let results = futures_util::future::join_all(futs).await;
+    if let Some(url) = results.into_iter().flatten().next() {
+        return Ok(url);
+    }
+
+    // Phase 2: search the full repo tree for `{skill_id}/SKILL.md`
+    // (a single request that handles any directory depth)
+    let tree_url = format!(
+        "https://api.github.com/repos/{}/{}/git/trees/{}?recursive=1",
+        owner, repo, branch
+    );
+    let resp = github_import::send_with_auth_fallback(client, &tree_url, auth)
+        .await
+        .map_err(|e| format!("GitHub API request failed: {}", e))?;
+
+    if resp.status().is_success() {
+        let data: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse tree: {}", e))?;
+
+        let target_suffix = format!("{}/SKILL.md", skill_id);
+        if let Some(tree) = data.get("tree").and_then(|t| t.as_array()) {
+            for entry in tree {
+                let path = match entry.get("path").and_then(|p| p.as_str()) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                if path.ends_with(&target_suffix) {
+                    return Ok(format!(
+                        "https://raw.githubusercontent.com/{}/{}/{}/{}",
+                        owner, repo, branch, path
+                    ));
+                }
+            }
+        }
+    }
+
+    Err(format!(
+        "Could not find SKILL.md for '{}' in {}/{}",
+        skill_id, owner, repo
+    ))
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SkillsShFileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+}
+
+#[tauri::command]
+pub async fn browse_skills_sh_directory(
+    state: State<'_, AppState>,
+    source: String,
+    skill_id: String,
+) -> Result<Vec<SkillsShFileEntry>, String> {
+    let repo_url = format!("https://github.com/{}", source);
+    let auth_str = github_import::github_direct_auth_from_settings(&state.db).await?;
+    let auth = auth_str.as_deref();
+    let repo = match github_import::resolve_repo_ref(&repo_url, auth).await {
+        Ok(r) => r,
+        Err(e) if auth.is_some() => github_import::resolve_repo_ref(&repo_url, None)
+            .await
+            .map_err(|_| e)?,
+        Err(e) => return Err(e),
+    };
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manage/0.9.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let md_url = find_skill_md_url(
+        &client,
+        &repo.owner,
+        &repo.repo,
+        &repo.branch,
+        &skill_id,
+        auth,
+    )
+    .await?;
+
+    // Extract directory path from the resolved URL
+    let dir_path = extract_dir_path(&md_url).unwrap_or_default();
+
+    // Use the recursive Tree API to get all files under the skill directory
+    let tree_url = format!(
+        "https://api.github.com/repos/{}/{}/git/trees/{}?recursive=1",
+        repo.owner, repo.repo, repo.branch
+    );
+    let resp = github_import::send_with_auth_fallback(&client, &tree_url, auth)
+        .await
+        .map_err(|e| format!("GitHub API request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
+    }
+
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse tree: {}", e))?;
+
+    let files = tree_entries_under_dir(&data, &dir_path);
+
+    Ok(files)
+}
+
+/// Extract flat file entries under `dir_path` from a recursive GitHub Tree API response.
+///
+/// Returns entries with `name` derived from the last path segment, full repo-relative
+/// `path`, and `is_dir` = true for tree entries.
+/// The directory entry itself is included so the frontend tree builder can nest children
+/// under it.
+fn tree_entries_under_dir(tree_data: &serde_json::Value, dir_path: &str) -> Vec<SkillsShFileEntry> {
+    let prefix = if dir_path.is_empty() {
+        String::new()
+    } else {
+        format!("{}/", dir_path)
+    };
+
+    let mut files: Vec<SkillsShFileEntry> = Vec::new();
+
+    let tree = match tree_data.get("tree").and_then(|t| t.as_array()) {
+        Some(t) => t,
+        None => return files,
+    };
+
+    for entry in tree {
+        let path = match entry.get("path").and_then(|p| p.as_str()) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        // Skip entries not under the skill directory, or the dir itself
+        if path == dir_path {
+            continue;
+        }
+        if !prefix.is_empty() && !path.starts_with(&prefix) {
+            continue;
+        }
+
+        let is_dir = entry.get("type").and_then(|t| t.as_str()) == Some("tree");
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+
+        files.push(SkillsShFileEntry {
+            name,
+            path: path.to_string(),
+            is_dir,
+        });
+    }
+
+    files
+}
+
+/// Read the text content of a remote file from a skills.sh source repository.
+///
+/// Resolves the repo ref (owner/repo/branch) from `source`, then fetches the file at
+/// `file_path` (repo-relative) via raw.githubusercontent.com.
+#[tauri::command]
+pub async fn read_skills_sh_file(
+    state: State<'_, AppState>,
+    source: String,
+    file_path: String,
+) -> Result<String, String> {
+    let repo_url = format!("https://github.com/{}", source);
+    let auth_str = github_import::github_direct_auth_from_settings(&state.db).await?;
+    let auth = auth_str.as_deref();
+    let repo = match github_import::resolve_repo_ref(&repo_url, auth).await {
+        Ok(r) => r,
+        Err(e) if auth.is_some() => github_import::resolve_repo_ref(&repo_url, None)
+            .await
+            .map_err(|_| e)?,
+        Err(e) => return Err(e),
+    };
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manage/0.9.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let raw_url = format!(
+        "https://raw.githubusercontent.com/{}/{}/{}/{}",
+        repo.owner, repo.repo, repo.branch, file_path
+    );
+
+    let resp = client
+        .get(&raw_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch file: {}", e))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("File fetch returned {}", resp.status()));
+    }
+
+    resp.text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))
+}
+
+#[tauri::command]
+pub async fn resolve_skills_sh_url(
+    state: State<'_, AppState>,
+    source: String,
+    skill_id: String,
+) -> Result<String, String> {
+    let repo_url = format!("https://github.com/{}", source);
+    let auth_str = github_import::github_direct_auth_from_settings(&state.db).await?;
+    let auth = auth_str.as_deref();
+    let repo = match github_import::resolve_repo_ref(&repo_url, auth).await {
+        Ok(r) => r,
+        Err(e) if auth.is_some() => github_import::resolve_repo_ref(&repo_url, None)
+            .await
+            .map_err(|_| e)?,
+        Err(e) => return Err(e),
+    };
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manage/0.9.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    find_skill_md_url(
+        &client,
+        &repo.owner,
+        &repo.repo,
+        &repo.branch,
+        &skill_id,
+        auth,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn install_from_skills_sh(
+    state: State<'_, AppState>,
+    source: String,
+    skill_id: String,
+) -> Result<String, String> {
+    let repo_url = format!("https://github.com/{}", source);
+    let auth_str = github_import::github_direct_auth_from_settings(&state.db).await?;
+    let auth = auth_str.as_deref();
+    let repo = match github_import::resolve_repo_ref(&repo_url, auth).await {
+        Ok(r) => r,
+        Err(e) if auth.is_some() => github_import::resolve_repo_ref(&repo_url, None)
+            .await
+            .map_err(|_| e)?,
+        Err(e) => return Err(e),
+    };
+
+    let client = reqwest::Client::builder()
+        .user_agent("skills-manage/0.9.1")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // Download full repo snapshot (tarball) and find the skill directory
+    let snapshot = github_import::download_repo_snapshot(&client, &repo, auth).await?;
+
+    // Find the skill directory by matching the last directory component against skill_id
+    let source_path = find_skill_path_in_snapshot(&snapshot, &skill_id).ok_or_else(|| {
+        format!(
+            "Could not find skill '{}' in repository '{}'",
+            skill_id, source
+        )
+    })?;
+
+    // Read and parse SKILL.md from the snapshot
+    let skill_md_path_in_repo = format!("{}/SKILL.md", source_path);
+    let raw_content = snapshot.files.get(&skill_md_path_in_repo).ok_or_else(|| {
+        format!(
+            "SKILL.md not found at '{}' in snapshot",
+            skill_md_path_in_repo
+        )
+    })?;
+    let content_str =
+        std::str::from_utf8(raw_content).map_err(|_| "SKILL.md is not valid UTF-8.".to_string())?;
+    let frontmatter = github_import::parse_frontmatter(content_str)
+        .ok_or_else(|| "Skill is missing valid frontmatter.".to_string())?;
+
+    let skill_name = frontmatter.name;
+
+    // Collect all files from the skill directory and write them to central dir
+    let source_files = github_import::collect_snapshot_source_files(&snapshot, &source_path)?;
+    let skill_dir = central_skills_dir().join(&skill_name);
+    let mut progress_state = github_import::GitHubImportProgressState::default();
+    github_import::write_snapshot_source_to_target(
+        &snapshot,
+        &source_files,
+        &skill_dir,
+        &source_path,
+        &mut progress_state,
+        None,
+    )?;
+
+    let skill_md_path = skill_dir.join("SKILL.md");
+
+    // Upsert to DB
+    let db_skill = crate::db::Skill {
+        id: skill_name.clone(),
+        name: skill_name.clone(),
+        description: frontmatter.description,
+        file_path: skill_md_path.to_string_lossy().into_owned(),
+        canonical_path: Some(skill_dir.to_string_lossy().into_owned()),
+        is_central: true,
+        source: Some(format!("skills.sh:{}", source)),
+        content: None,
+        scanned_at: chrono::Utc::now().to_rfc3339(),
+    };
+    crate::db::upsert_skill(&state.db, &db_skill).await?;
+
+    Ok(skill_name)
 }
 
 // ─── AI Explanation ──────────────────────────────────────────────────────────
@@ -1352,11 +1847,11 @@ pub async fn refresh_skill_explanation(
 mod tests {
     use super::{
         add_registry_impl, cache_skill_explanation, classify_reqwest_error,
-        detect_explanation_api_protocol, format_reqwest_error, get_fallback_endpoint,
-        load_cached_skill_explanation, marketplace_skills_from_candidates,
+        detect_explanation_api_protocol, extract_dir_path, format_reqwest_error,
+        get_fallback_endpoint, load_cached_skill_explanation, marketplace_skills_from_candidates,
         registry_has_cached_skills, search_marketplace_skills_impl, sync_registry_impl,
-        ExplanationApiProtocol, ExplanationErrorKind, RegistryCacheMetadata, RegistrySyncStatus,
-        SyncRegistryOptions,
+        tree_entries_under_dir, ExplanationApiProtocol, ExplanationErrorKind,
+        RegistryCacheMetadata, RegistrySyncStatus, SyncRegistryOptions,
     };
     use crate::commands::github_import::RemoteSkillCandidate;
     use crate::db;
@@ -1877,5 +2372,155 @@ mod tests {
         assert!(registry_has_cached_skills(&pool, &registry.id)
             .await
             .expect("cached"));
+    }
+
+    // ── skills.sh tree browsing tests ──────────────────────────────────
+
+    #[test]
+    fn extract_dir_path_parses_root_skill() {
+        let url = "https://raw.githubusercontent.com/owner/repo/branch/skill-name/SKILL.md";
+        assert_eq!(extract_dir_path(url), Some("skill-name".to_string()));
+    }
+
+    #[test]
+    fn extract_dir_path_parses_nested_skill() {
+        let url = "https://raw.githubusercontent.com/owner/repo/branch/skills/my-skill/SKILL.md";
+        assert_eq!(extract_dir_path(url), Some("skills/my-skill".to_string()));
+    }
+
+    #[test]
+    fn extract_dir_path_parses_deeply_nested_skill() {
+        let url =
+            "https://raw.githubusercontent.com/owner/repo/branch/skills/.curated/deep-skill/SKILL.md";
+        assert_eq!(
+            extract_dir_path(url),
+            Some("skills/.curated/deep-skill".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_dir_path_returns_none_for_non_skill_md_url() {
+        let url = "https://raw.githubusercontent.com/owner/repo/branch/some-other-file.txt";
+        assert_eq!(extract_dir_path(url), None);
+    }
+
+    #[test]
+    fn extract_dir_path_parses_orphan_skill_md() {
+        // SKILL.md at repo root — no directory prefix
+        let url = "https://raw.githubusercontent.com/owner/repo/branch/SKILL.md";
+        assert_eq!(extract_dir_path(url), Some(String::new()));
+    }
+
+    fn make_tree_value(entries: &[(&str, &str)]) -> serde_json::Value {
+        let tree: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|(path, typ)| serde_json::json!({ "path": path, "type": typ }))
+            .collect();
+        serde_json::json!({ "tree": tree })
+    }
+
+    #[test]
+    fn tree_entries_under_dir_returns_nested_entries_for_root_skill() {
+        let data = make_tree_value(&[
+            ("skill-name", "tree"),
+            ("skill-name/SKILL.md", "blob"),
+            ("skill-name/config.json", "blob"),
+            ("skill-name/scripts", "tree"),
+            ("skill-name/scripts/deploy.sh", "blob"),
+        ]);
+        let entries = tree_entries_under_dir(&data, "skill-name");
+
+        // Should include everything under skill-name/ except the directory itself
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "skill-name/SKILL.md",
+                "skill-name/config.json",
+                "skill-name/scripts",
+                "skill-name/scripts/deploy.sh",
+            ]
+        );
+        // Verify is_dir
+        assert!(!entries[0].is_dir); // SKILL.md
+        assert!(!entries[1].is_dir); // config.json
+        assert!(entries[2].is_dir); // scripts
+        assert!(!entries[3].is_dir); // deploy.sh
+                                     // Verify names
+        assert_eq!(entries[0].name, "SKILL.md");
+        assert_eq!(entries[1].name, "config.json");
+        assert_eq!(entries[2].name, "scripts");
+        assert_eq!(entries[3].name, "deploy.sh");
+    }
+
+    #[test]
+    fn tree_entries_under_dir_filters_to_nested_skill() {
+        let data = make_tree_value(&[
+            ("skills", "tree"),
+            ("skills/openai-docs", "tree"),
+            ("skills/openai-docs/SKILL.md", "blob"),
+            ("skills/openai-docs/nested", "tree"),
+            ("skills/openai-docs/nested/deep.py", "blob"),
+            ("skills/other-skill", "tree"),
+            ("skills/other-skill/SKILL.md", "blob"),
+        ]);
+        let entries = tree_entries_under_dir(&data, "skills/openai-docs");
+
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "skills/openai-docs/SKILL.md",
+                "skills/openai-docs/nested",
+                "skills/openai-docs/nested/deep.py",
+            ]
+        );
+        assert!(entries[1].is_dir);
+        assert_eq!(entries[1].name, "nested");
+    }
+
+    #[test]
+    fn tree_entries_under_dir_handles_empty_dir_path() {
+        let data = make_tree_value(&[
+            ("SKILL.md", "blob"),
+            ("README.md", "blob"),
+            ("subdir", "tree"),
+            ("subdir/file.txt", "blob"),
+        ]);
+        let entries = tree_entries_under_dir(&data, "");
+        // Should include everything since prefix is empty, except the empty-string dir itself
+        let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["SKILL.md", "README.md", "subdir", "subdir/file.txt"]
+        );
+    }
+
+    #[test]
+    fn tree_entries_under_dir_skips_entries_not_under_dir() {
+        let data = make_tree_value(&[
+            ("unrelated", "tree"),
+            ("unrelated/file.txt", "blob"),
+            ("my-skill", "tree"),
+            ("my-skill/SKILL.md", "blob"),
+        ]);
+        let entries = tree_entries_under_dir(&data, "my-skill");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "SKILL.md");
+        assert_eq!(entries[0].path, "my-skill/SKILL.md");
+    }
+
+    #[test]
+    fn tree_entries_under_dir_skips_only_the_exact_dir_not_sibling_with_same_prefix() {
+        // Ensure we don't accidentally match prefixes with partial name matches
+        let data = make_tree_value(&[
+            ("my-skill", "tree"),
+            ("my-skill/SKILL.md", "blob"),
+            ("my-skill-extra", "tree"),
+            ("my-skill-extra/extra.md", "blob"),
+        ]);
+        let entries = tree_entries_under_dir(&data, "my-skill");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "SKILL.md");
     }
 }
