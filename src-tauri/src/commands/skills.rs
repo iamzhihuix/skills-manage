@@ -129,8 +129,13 @@ fn build_skill_directory_nodes(
 
     let mut nodes = Vec::new();
     for entry in entries {
-        let entry = entry
-            .map_err(|e| format!("Failed to read directory entry in '{}': {}", current.display(), e))?;
+        let entry = entry.map_err(|e| {
+            format!(
+                "Failed to read directory entry in '{}': {}",
+                current.display(),
+                e
+            )
+        })?;
         let path = entry.path();
         let metadata = std::fs::symlink_metadata(&path)
             .map_err(|e| format!("Failed to read metadata for '{}': {}", path.display(), e))?;
@@ -139,7 +144,11 @@ fn build_skill_directory_nodes(
             .unwrap_or_else(|_| metadata.file_type().is_dir());
         let canonical_dir = if is_dir {
             Some(path.canonicalize().map_err(|e| {
-                format!("Failed to resolve directory target '{}': {}", path.display(), e)
+                format!(
+                    "Failed to resolve directory target '{}': {}",
+                    path.display(),
+                    e
+                )
             })?)
         } else {
             None
@@ -1286,7 +1295,10 @@ mod tests {
         assert_eq!(nodes[0].children.len(), 2);
         assert_eq!(nodes[0].children[0].name, "guides");
         assert!(nodes[0].children[0].is_dir);
-        assert_eq!(nodes[0].children[0].children[0].relative_path, "docs/guides/tips.md");
+        assert_eq!(
+            nodes[0].children[0].children[0].relative_path,
+            "docs/guides/tips.md"
+        );
         assert_eq!(nodes[1].name, "notes.txt");
         assert!(!nodes[1].is_dir);
         assert_eq!(nodes[2].name, "SKILL.md");
