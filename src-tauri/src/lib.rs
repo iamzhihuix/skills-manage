@@ -102,6 +102,7 @@ pub fn run() {
             commands::marketplace::get_skill_explanation,
             commands::marketplace::explain_skill_stream,
             commands::marketplace::refresh_skill_explanation,
+            commands::marketplace::test_ai_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

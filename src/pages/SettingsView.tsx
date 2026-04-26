@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Pencil, Loader2, FolderOpen, Cpu, Info, Database, Globe, Palette, Droplets, Bot, ChevronDown, ChevronRight, KeyRound } from "lucide-react";
+import { Plus, Trash2, Pencil, Loader2, FolderOpen, Cpu, Info, Database, Globe, Palette, Droplets, Bot, ChevronDown, ChevronRight, KeyRound, Eye, EyeOff, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -22,7 +22,7 @@ import { AddDirectoryDialog } from "@/components/settings/AddDirectoryDialog";
 import { PlatformDialog } from "@/components/settings/PlatformDialog";
 import { Input } from "@/components/ui/input";
 import { AgentWithStatus, ScanDirectory } from "@/types";
-import { AI_PROVIDERS, REGION_LABELS, RegionId } from "@/data/aiProviders";
+import { AI_PROVIDERS, RegionId, ApiProtocol, API_PROTOCOLS } from "@/data/aiProviders";
 import { deriveHomeDir, formatPathForDisplay, joinPathForDisplay } from "@/lib/path";
 
 // ─── App constants ────────────────────────────────────────────────────────────
@@ -61,6 +61,20 @@ const CTP_VAR_MAP: Record<CatppuccinAccent, string> = {
 };
 
 const FLAVOR_ORDER: CatppuccinFlavor[] = ["mocha", "macchiato", "frappe", "latte"];
+
+/** Expand a raw custom base URL to its full endpoint based on protocol. */
+function resolveCustomUrl(rawUrl: string, protocol: ApiProtocol | ""): string {
+  const trimmed = rawUrl.trim();
+  if (!trimmed || !trimmed.endsWith("/v1")) return trimmed;
+  switch (protocol) {
+    case "openai":
+      return trimmed + "/chat/completions";
+    case "anthropic":
+      return trimmed + "/messages";
+    default:
+      return trimmed;
+  }
+}
 
 // ─── ScanDirectoryRow ─────────────────────────────────────────────────────────
 
@@ -215,9 +229,13 @@ export function SettingsView() {
   const [aiProvider, setAiProvider] = useState("claude");
   const [aiRegion, setAiRegion] = useState<RegionId>("intl");
   const [aiApiKey, setAiApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
   const [aiModel, setAiModel] = useState("");
   const [aiCustomUrl, setAiCustomUrl] = useState("");
+  const [aiProtocol, setAiProtocol] = useState<ApiProtocol | "">("");
   const [aiLoaded, setAiLoaded] = useState(false);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [providerLoading, setProviderLoading] = useState(false);
 
   // Load AI settings on mount
   useEffect(() => {
@@ -225,58 +243,92 @@ export function SettingsView() {
       try {
         const provider = await invoke<string | null>("get_setting", { key: "ai_provider" });
         const region = await invoke<string | null>("get_setting", { key: "ai_region" });
-        const key = await invoke<string | null>("get_setting", { key: "ai_api_key" });
-        const model = await invoke<string | null>("get_setting", { key: "ai_model" });
-        const url = await invoke<string | null>("get_setting", { key: "ai_api_url" });
         if (provider) setAiProvider(provider);
         if (region) setAiRegion(region as RegionId);
-        if (key) setAiApiKey(key);
-        if (model) setAiModel(model);
-        if (url) setAiCustomUrl(url);
+        if (provider) {
+          const key = await invoke<string | null>("get_setting", { key: `ai_api_key__${provider}` });
+          const model = await invoke<string | null>("get_setting", { key: `ai_model__${provider}` });
+          const baseUrl = await invoke<string | null>("get_setting", { key: `ai_custom_base_url__${provider}` });
+          const protocol = await invoke<string | null>("get_setting", { key: `ai_protocol__${provider}` });
+          if (key) setAiApiKey(key);
+          if (model) setAiModel(model);
+          else {
+            const p = AI_PROVIDERS.find((x) => x.id === provider);
+            if (p) setAiModel(p.defaultModel);
+          }
+          if (baseUrl) setAiCustomUrl(baseUrl);
+          if (protocol) setAiProtocol(protocol as ApiProtocol);
+        }
       } catch { /* first run, no settings yet */ }
       setAiLoaded(true);
     })();
   }, []);
 
-  // Save AI settings when changed
+  // Save AI settings when changed (only after user interaction)
   useEffect(() => {
-    if (!aiLoaded) return;
+    if (!aiLoaded || !hasUserInteracted) return;
     const save = async () => {
       try {
         await invoke("set_setting", { key: "ai_provider", value: aiProvider });
         await invoke("set_setting", { key: "ai_region", value: aiRegion });
-        await invoke("set_setting", { key: "ai_api_key", value: aiApiKey });
-        await invoke("set_setting", { key: "ai_model", value: aiModel });
-        // Compute and save the actual API URL
+        await invoke("set_setting", { key: `ai_api_key__${aiProvider}`, value: aiApiKey });
+        await invoke("set_setting", { key: `ai_model__${aiProvider}`, value: aiModel });
         const p = AI_PROVIDERS.find((x) => x.id === aiProvider);
-        const url = aiProvider === "custom" ? aiCustomUrl : (p?.endpoints[aiRegion] ?? "");
-        await invoke("set_setting", { key: "ai_api_url", value: url });
+        const url = aiProvider === "custom" ? resolveCustomUrl(aiCustomUrl, aiProtocol) : (p?.endpoints[aiRegion] ?? "");
+        await invoke("set_setting", { key: `ai_api_url__${aiProvider}`, value: url });
+        await invoke("set_setting", { key: `ai_custom_base_url__${aiProvider}`, value: aiCustomUrl });
+        await invoke("set_setting", { key: `ai_protocol__${aiProvider}`, value: aiProtocol });
       } catch { /* ignore */ }
     };
     save();
-  }, [aiProvider, aiRegion, aiApiKey, aiModel, aiCustomUrl, aiLoaded]);
+  }, [aiProvider, aiRegion, aiApiKey, aiModel, aiCustomUrl, aiProtocol, aiLoaded, hasUserInteracted]);
 
   // When provider or region changes, update model to default
-  function handleProviderChange(id: string) {
+  async function handleProviderChange(id: string) {
+    if (providerLoading) return;
+    setProviderLoading(true);
+    setAiLoaded(false);           // block save until new config is loaded
     setAiProvider(id);
+    setAiTestResult(null);
     const p = AI_PROVIDERS.find((x) => x.id === id);
     if (p) {
-      setAiModel(p.defaultModel);
-      // Auto-select first available region
       if (!p.regions.includes(aiRegion)) {
         setAiRegion(p.regions[0]);
       }
+    }
+    try {
+      const key = await invoke<string | null>("get_setting", { key: `ai_api_key__${id}` });
+      const model = await invoke<string | null>("get_setting", { key: `ai_model__${id}` });
+      const protocol = await invoke<string | null>("get_setting", { key: `ai_protocol__${id}` });
+      const baseUrl = await invoke<string | null>("get_setting", { key: `ai_custom_base_url__${id}` });
+      setAiApiKey(key ?? "");
+      setAiModel(model ?? p?.defaultModel ?? "");
+      setAiProtocol(protocol ? (protocol as ApiProtocol) : "");
+      setAiCustomUrl(baseUrl ?? "");
+    } catch {
+      setAiApiKey("");
+      setAiModel(p?.defaultModel ?? "");
+      setAiCustomUrl("");
+      setAiProtocol("");
+    } finally {
+      setAiLoaded(true);
+      setProviderLoading(false);
     }
   }
 
   const currentProvider = AI_PROVIDERS.find((p) => p.id === aiProvider);
   const resolvedUrl = aiProvider === "custom"
-    ? aiCustomUrl
+    ? resolveCustomUrl(aiCustomUrl, aiProtocol)
     : (currentProvider?.endpoints[aiRegion] ?? "");
-  const lang = i18n.language;
+
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<{ ok: boolean; msg: string; details?: string } | null>(null);
   const [showAiTestDetails, setShowAiTestDetails] = useState(false);
+
+  // Clear stale test result when config changes
+  useEffect(() => {
+    setAiTestResult(null);
+  }, [aiApiKey, aiCustomUrl, aiProtocol, aiRegion, aiModel]);
 
   const [isAddDirOpen, setIsAddDirOpen] = useState(false);
   const [showBuiltinDirs, setShowBuiltinDirs] = useState(false);
@@ -581,9 +633,9 @@ export function SettingsView() {
             <div className="flex items-center gap-2">
               <Bot className="size-5 text-muted-foreground" />
               <div>
-                <CardTitle>{lang === "zh" ? "AI 提供商" : "AI Provider"}</CardTitle>
+                <CardTitle>{t("settings.aiProviderTitle")}</CardTitle>
                 <CardDescription className="mt-1">
-                  {lang === "zh" ? "配置用于技能解释的 AI 服务。所有提供商兼容 Anthropic API 格式。" : "Configure AI service for skill explanation. All providers use Anthropic-compatible API."}
+                  {t("settings.aiProviderDesc")}
                 </CardDescription>
               </div>
             </div>
@@ -591,85 +643,117 @@ export function SettingsView() {
           <CardContent>
             <div className="space-y-4">
               <div>
-                <label className="text-xs text-muted-foreground mb-2 block">{lang === "zh" ? "提供商" : "Provider"}</label>
+                <label className="text-xs text-muted-foreground mb-2 block">{t("settings.aiProviderLabel")}</label>
                 <div className="flex flex-wrap gap-1.5">
                   {AI_PROVIDERS.map((p) => (
-                    <button key={p.id} onClick={() => handleProviderChange(p.id)} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProvider === p.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"}`}>
-                      {lang === "zh" ? p.name.zh : p.name.en}
+                    <button key={p.id} disabled={providerLoading} onClick={() => { setHasUserInteracted(true); handleProviderChange(p.id); }} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProvider === p.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"} ${providerLoading ? "opacity-50 cursor-not-allowed" : ""}`}>
+                      {providerLoading && aiProvider === p.id ? <Loader2 className="size-3 animate-spin inline mr-1" /> : null}
+                      {t(`settings.aiProvider.${p.id}`)}
                     </button>
                   ))}
                 </div>
               </div>
               {currentProvider && currentProvider.regions.length > 1 && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-2 block">{lang === "zh" ? "区域" : "Region"}</label>
+                  <label className="text-xs text-muted-foreground mb-2 block">{t("settings.aiRegionLabel")}</label>
                   <div className="flex gap-1.5">
                     {currentProvider.regions.map((r) => (
-                      <button key={r} onClick={() => setAiRegion(r)} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiRegion === r ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>
-                        {lang === "zh" ? REGION_LABELS[r].zh : REGION_LABELS[r].en}
+                      <button key={r} onClick={() => { setHasUserInteracted(true); setAiRegion(r); }} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiRegion === r ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>
+                        {t(`settings.aiRegion.${r}`)}
                       </button>
                     ))}
                   </div>
                 </div>
               )}
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">API Key</label>
-                <Input type="password" placeholder="sk-..." value={aiApiKey} onChange={(e) => setAiApiKey(e.target.value)} />
+                <label className="text-xs text-muted-foreground mb-1 block">{t("settings.aiApiKeyLabel")}</label>
+                <div className="relative">
+                  <Input type={showKey ? "text" : "password"} placeholder="sk-..." value={aiApiKey} onChange={(e) => { setHasUserInteracted(true); setAiApiKey(e.target.value); }} className="pr-9" />
+                  <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                    {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">{lang === "zh" ? "模型" : "Model"}</label>
-                <Input placeholder={lang === "zh" ? "模型名称" : "Model name"} value={aiModel} onChange={(e) => setAiModel(e.target.value)} />
+                <label className="text-xs text-muted-foreground mb-1 block">{t("settings.aiModelLabel")}</label>
+                <Input placeholder={t("settings.aiModelPlaceholder")} value={aiModel} onChange={(e) => { setHasUserInteracted(true); setAiModel(e.target.value); }} />
               </div>
               {aiProvider === "custom" && (
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">API URL</label>
-                  <Input placeholder="https://..." value={aiCustomUrl} onChange={(e) => setAiCustomUrl(e.target.value)} />
+                  <label className="text-xs text-muted-foreground mb-2 block">{t("settings.aiApiFormatLabel")}</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {API_PROTOCOLS.map((proto) => (
+                      <button key={proto.id} onClick={() => { setHasUserInteracted(true); setAiProtocol(proto.id as ApiProtocol | ""); }} className={`px-3 py-1.5 rounded-md text-xs transition-colors cursor-pointer border ${aiProtocol === proto.id ? "bg-primary/15 border-primary text-foreground font-medium" : "border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-hover-bg/10"}`}>
+                        {t(`settings.aiProtocol.${proto.id || "auto"}`)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
-              <div className="flex items-center gap-3">
-                {resolvedUrl && (
-                  <div className="text-xs text-muted-foreground bg-muted/30 rounded-md px-3 py-2 font-mono truncate flex-1 min-w-0">{resolvedUrl}</div>
-                )}
-                <Button variant="outline" size="sm" disabled={aiTesting || !aiApiKey || !resolvedUrl} onClick={async () => {
-                  setAiTesting(true); setAiTestResult(null); setShowAiTestDetails(false);
-                  try {
-                    const result = await invoke<string>("explain_skill", { content: "Test connection. Reply with: OK" });
-                    setAiTestResult({ ok: true, msg: result.slice(0, 60) });
-                  } catch (err) {
-                    const raw = String(err);
-                    // Try to extract structured error from JSON-like error strings
-                    let msg = raw;
-                    let details: string | undefined;
-                    const prefix = "API 请求失败: ";
-                    if (raw.startsWith(prefix)) {
-                      const after = raw.slice(prefix.length);
-                      const nlIdx = after.indexOf("\n");
-                      if (nlIdx > 0) {
-                        msg = after.slice(nlIdx + 1);
-                        details = after.slice(0, nlIdx);
-                      } else {
-                        msg = after;
+              {aiProvider === "custom" && (
+                <div>
+                  <label className="text-xs text-muted-foreground mb-1 block">{t("settings.aiApiUrlLabel")}</label>
+                  <Input placeholder="https://..." value={aiCustomUrl} onChange={(e) => { setHasUserInteracted(true); setAiCustomUrl(e.target.value); }} />
+                </div>
+              )}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="min-w-0">
+                  {aiTestResult?.ok ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400">
+                      <Check className="size-3.5" />
+                      {t("settings.aiTestConnectionVerified")}
+                    </span>
+                  ) : aiProvider === "custom" && !aiCustomUrl.trim() ? (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Info className="size-3.5" />
+                      {t("settings.aiTestEnterUrl")}
+                    </span>
+                  ) : null}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={aiTesting || !aiApiKey || !resolvedUrl}
+                  onClick={async () => {
+                    setAiTesting(true); setAiTestResult(null); setShowAiTestDetails(false);
+                    try {
+                      await invoke<string>("test_ai_connection");
+                      setAiTestResult({ ok: true, msg: t("settings.aiTestSuccess") });
+                    } catch (err) {
+                      const raw = String(err);
+                      let msg = raw;
+                      let details: string | undefined;
+                      const prefix = "API 请求失败: ";
+                      if (raw.startsWith(prefix)) {
+                        const after = raw.slice(prefix.length);
+                        const nlIdx = after.indexOf("\n");
+                        if (nlIdx > 0) {
+                          msg = after.slice(nlIdx + 1);
+                          details = after.slice(0, nlIdx);
+                        } else {
+                          msg = after;
+                        }
                       }
-                    }
-                    setAiTestResult({ ok: false, msg, details });
-                  }
-                  finally { setAiTesting(false); }
-                }} className="shrink-0">
+                      setAiTestResult({ ok: false, msg, details });
+                    } finally { setAiTesting(false); }
+                  }}
+                  className="shrink-0"
+                >
                   {aiTesting ? <Loader2 className="size-3.5 animate-spin" /> : <Bot className="size-3.5" />}
-                  <span>{lang === "zh" ? "测试连接" : "Test"}</span>
+                  <span>{aiTesting ? t("settings.aiTestTesting") : t("settings.aiTestButton")}</span>
                 </Button>
               </div>
-              {aiTestResult && (
-                <div className={`text-xs rounded-md px-3 py-2 space-y-1.5 ${aiTestResult.ok ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-destructive/10 text-destructive"}`}>
-                  <p>{aiTestResult.ok ? "✓ " : "✕ "}{aiTestResult.msg}</p>
-                  {!aiTestResult.ok && aiTestResult.details && (
+              {aiTestResult && !aiTestResult.ok && (
+                <div className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 space-y-1.5 text-destructive text-xs">
+                  <p>{aiTestResult.msg}</p>
+                  {aiTestResult.details && (
                     <div>
                       <button
                         className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                         onClick={() => setShowAiTestDetails((v) => !v)}
                       >
                         {showAiTestDetails ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-                        {lang === "zh" ? "查看详情" : "Details"}
+                        {t("settings.aiTestDetails")}
                       </button>
                       {showAiTestDetails && (
                         <pre className="mt-1 text-[11px] leading-4 font-mono text-muted-foreground whitespace-pre-wrap break-all bg-muted/30 rounded-md p-2 max-h-32 overflow-auto">
@@ -678,11 +762,9 @@ export function SettingsView() {
                       )}
                     </div>
                   )}
-                  {!aiTestResult.ok && currentProvider && currentProvider.regions.length > 1 && (
+                  {currentProvider && currentProvider.regions.length > 1 && (
                     <p className="text-muted-foreground">
-                      {lang === "zh"
-                        ? `提示：可在上方切换区域端点后重试（当前：${REGION_LABELS[aiRegion]?.zh ?? aiRegion}）`
-                        : `Tip: Try switching the region endpoint above (current: ${REGION_LABELS[aiRegion]?.en ?? aiRegion})`}
+                      {t("settings.aiTestRegionTip", { region: t(`settings.aiRegion.${aiRegion}`) })}
                     </p>
                   )}
                 </div>
